@@ -80,3 +80,33 @@ class PositionalEncoding(nn.Module):
     def forward(self,x):
         x = x + (self.pe[:, :x.shape[1], :]).requires_grad_(False)
         return self.dropout(x)
+
+
+# let's first build layer normalisation
+class LayerNormalisation(nn.Module):
+    """
+    This will normalise the values of vectors between 0 and 1.
+    Also, apart from standard normalisation process of finding mean (mu) and variance (sigma),
+    ----------
+    we  also introduce two parameters, usually called "gamma"(multiplicative) and beta (additive)
+    that introduce some fluctuations in the data, because maybe having all values between 0 and 1 may
+    be too restrivtive for the netword. the network will learn to tune these
+    parameters to introduce fluctuations when necessary.
+
+    epsilon: this parameter is there for the purpose of numerical stability and to avoid
+            division by 0
+
+
+    """
+
+    def __init__(self, eps: float = 10**-6) -> None:
+        super().__init__()
+        self.eps = eps
+        self.alpha = nn.Parameter(torch.ones(1)) # mulitplies=d
+        self.bias = nn.Parameter(torch.zeros(1)) # added
+
+    def forward(self, x):
+        mean = x.mean(dim = -1, keepdim=True)
+        std = x.std(dim = -1, keepdim=True)
+        return self.alpha * (x - mean) / (std + self.eps) + self.bias
+        
