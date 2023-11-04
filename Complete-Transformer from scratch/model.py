@@ -75,7 +75,7 @@ class PositionalEncoding(nn.Module):
         # register_buffer => Tensor which is not a parameter,
         #  but should be part of the modules state.
         # Used for tensors that need to be on the same device as the module.
-        self.register_buffer()
+        self.register_buffer('pe',pe)
 
     def forward(self,x):
         x = x + (self.pe[:, :x.shape[1], :]).requires_grad_(False)
