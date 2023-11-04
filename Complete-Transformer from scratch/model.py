@@ -109,4 +109,41 @@ class LayerNormalisation(nn.Module):
         mean = x.mean(dim = -1, keepdim=True)
         std = x.std(dim = -1, keepdim=True)
         return self.alpha * (x - mean) / (std + self.eps) + self.bias
+
+class FeedForwardBlock(nn.Module):
+    """
+    d_model : Dimension of embeddings
+    d_ff : embedding dimension to which input d_model embedding is mapped to.
+
+    Since next layer also takes d_model as input so the flow becomes as :
+
+            d_model --> d_ff --> d_model
+
+    """
+    def __init__(self, d_model: int, d_ff: int, droput) -> None:
+        super().__init__()
+        self.linear_1 = nn.Linear(d_model, d_ff) # W1 and B1
+        self.droput = nn.Dropout(droput)
+        self.linear_2 = nn.Linear(d_ff,d_model) # W2 and B2
+
+    def forward(self, x):
+        """
+        Input sentence of shape :
         
+        (Batch, Seq_Len, d_model)
+                    |
+                    |
+        (Applying Linear Layer )
+                    |
+                    |        
+        (Batch, Seq_Len, d_ff)
+                    |
+                    |        
+        (Applying Linear Layer )
+                    |
+                    |        
+        (Batch, Seq_Len, d_model) 
+        """
+        return self.linear_2(self.droput(torch.relu(self.linear_1(x))))
+
+
