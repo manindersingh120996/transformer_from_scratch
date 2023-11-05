@@ -211,5 +211,19 @@ class MultiHeadAttentionBlock(nn.Module):
         # (Batch, Seq_len, d_model) --> (Batch, seq_len, d_model)
         return self.w_o(x)
 
+# building residual connection 
+class ResidualConnection(nn.Module):
 
+    def __init__(self,dropout: float) -> None:
+        super().__init__()
+        self.dropout = nn.Dropout(dropout)
+        self.norm = LayerNormalisation()
+
+    def forward(self, x, sublayer):
+        """
+        In original paper they first applied sublayer and then layer normalisation
+        but in various resources layer norm. is applied first and then sub layer,
+        we will also be sticking with the same approach.
+        """
+        return x + self.dropout(sublayer(self.norm(x)))
 
