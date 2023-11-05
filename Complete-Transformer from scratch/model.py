@@ -227,3 +227,39 @@ class ResidualConnection(nn.Module):
         """
         return x + self.dropout(sublayer(self.norm(x)))
 
+class EncoderBlock(nn.Module):
+
+    def __init__(self, self_attention_block: MultiHeadAttentionBlock,
+                feed_forward_block: FeedForwardBlock, dropout: float) -> None:
+        super().__init__()
+        self.self_attention_block = self_attention_block
+        self.feed_forward_block = feed_forward_block
+        self.residual_connections = nn.ModuleList([ResidualConnection(dropout) for _ in range(2)])
+
+
+    def forward(self, x, src_mask):
+        """
+        It is the mask which we apply to the input of the encoder. And the purpose of masking is
+        to hide the interaction of padding words with other words in the sentence with other words.
+        """
+        # self attention block and residual connection  block
+        x = self.residual_connections[0](x, lambda x: self.self_attention_block(x, x, x, src_mask))
+        # feed forward connection block
+        x = self.residual_connections[1](x, self.feed_forward_block)
+        return x
+
+
+class Encoder(nn.Module):
+    """
+    Building encoder block 
+    """
+
+    def __init__(self, layer: nn.ModuleList) -> None:
+        super().__init__()
+        self.layers = layers
+        self.norm = LayerNormalisation()
+
+    def forward(self, x, mask):
+        for layer in self.layers:
+            x = layer(x, mask)
+        return self.norm(x)
