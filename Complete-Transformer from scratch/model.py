@@ -231,6 +231,10 @@ class EncoderBlock(nn.Module):
 
     def __init__(self, self_attention_block: MultiHeadAttentionBlock,
                 feed_forward_block: FeedForwardBlock, dropout: float) -> None:
+        """
+        since in original paper we have two residual connections
+        we are here creating two residual connection using following code and then using them accordingly
+        """
         super().__init__()
         self.self_attention_block = self_attention_block
         self.feed_forward_block = feed_forward_block
@@ -262,4 +266,54 @@ class Encoder(nn.Module):
     def forward(self, x, mask):
         for layer in self.layers:
             x = layer(x, mask)
+        return self.norm(x)
+
+class DecoderBlock(nn.Module):
+    """
+    For multi-head attention layer in decoder block the "query" 
+    comes from the decoder block
+    and "key" and "values" comes from the encoder block : 
+    --------Thus it is considered as CROSS-ATTENTION and not self-attention-------
+
+    Here we are having 3 Residual Connection Block
+    """
+
+    def __init__(self, self_attention_block: MultiHeadAttentionBlock, 
+                        cross_attention_block: MultiHeadAttentionBlock,
+                        feed_forward_block: FeedForwardBlock, dropout:float) -> None:
+        super().__init__()
+        self.self_attention_block = self_attention_block
+        self.cross_attention_block = cross_attention_block
+        self.feed_forward_block = feed_forward_block
+        self.residual_connections = nn.ModuleList([ResidualConnection(dropout) for _ in range(3)])
+
+    def forward(self, x, encoder_output, src_mask, tgt_mask):
+        """
+        Q why we are using two masks here namely source and target mask?
+        -----> In the given task we are undertaking translation task,
+            in which source language is english
+            and target language. So, have to make our model 
+            understand both the langugages thus masking both
+            input and output langugages.
+        """
+        x = self.residual_connections[0](x, lambda x: self.self_attention_block(x, x, x, tgt_mask))
+        # so here we are taking output from encoder as key and value pair
+        x = self.residual_connections[1](x, lambda x: self.self_attention_block(x, encoder_output, encoder_output, src_mask))
+        x = self.residual_connections[2](x, self.feed_forward_block)
+        return x
+
+class Decoder(nn.Module):
+    """
+    Building multiple Decoder Layers with decoder blocks
+    """
+    def __init__(self, layers: nn.ModuleList) -> None:
+        super().__init__()
+        self.layers = layers
+        self.norm = LayerNormalisation()
+
+    def forward(self, x, encoder_output, src_mask, tgt_mask):
+        # since each layer is in encoder output so we will be giving it x,
+        # src_mask,tgt_mask and encoder_output
+        for layer in self.layers:
+            x = layer(x, encoder_output, src_mask, tgt_mask)
         return self.norm(x)
