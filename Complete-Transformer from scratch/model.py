@@ -254,7 +254,7 @@ class Encoder(nn.Module):
     Building encoder block 
     """
 
-    def __init__(self, layer: nn.ModuleList) -> None:
+    def __init__(self, layers: nn.ModuleList) -> None:
         super().__init__()
         self.layers = layers
         self.norm = LayerNormalisation()
