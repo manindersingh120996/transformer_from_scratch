@@ -1,4 +1,5 @@
 # pylint: disable=no-member
+# pylint: disable=too-many-function-args
 import torch
 import math
 import torch.nn as nn
@@ -258,8 +259,8 @@ class Encoder(nn.Module):
     Building encoder block 
     """
 
-    # def __init__(self, layers: nn.ModuleList) -> None: # could be error and have to put Encoder block in Layers is error doesn't resolve
-    def __init__(self, layers: EncoderBlock) -> None: 
+    def __init__(self, layers: nn.ModuleList) -> None: # could be error and have to put Encoder block in Layers is error doesn't resolve
+    # def __init__(self, layers: EncoderBlock) -> None: 
         super().__init__()
         self.layers = layers
         self.norm = LayerNormalisation()
@@ -307,8 +308,8 @@ class Decoder(nn.Module):
     """
     Building multiple Decoder Layers with decoder blocks
     """
-    # def __init__(self, layers: nn.ModuleList) -> None: # to uncomment this is doesn't works
-    def __init__(self, layers: DecoderBlock) -> None:
+    def __init__(self, layers: nn.ModuleList) -> None:
+    # def __init__(self, layers: DecoderBlock) -> None:
         super().__init__()
         self.layers = layers
         self.norm = LayerNormalisation()
@@ -361,3 +362,63 @@ class Transformer(nn.Module):
         tgt = self.tgt_embed(tgt)
         tgt = self.tgt_pos(tgt)
         return self.decoder(tgt, encoder_output, src_mask, tgt_mask)
+
+    def projection(self, x):
+        return self.projection_layer(x)
+
+
+# Now building transformer given all the hyper parameters
+def build_transformer(src_vocab_size: int, tgt_vocab_size: int, src_seq_len: int, tgt_seq_len: int,
+                        d_model: int = 512, N: int = 6, h: int= 8, dropout: float = 0.1, d_ff: int = 2048) -> Transformer:
+    """
+    N = no. of encoders
+    h = no. of heads
+    d_model = encoding dimension
+    """
+    # creating embedding layers 
+    src_embed = InputEmbeddings(d_model, src_vocab_size)
+    tgt_embed = InputEmbeddings(d_model, tgt_vocab_size)
+
+    # creating postional encoding layers
+    src_pos = PositionalEncoding(d_model, src_seq_len, dropout)
+    tgt_pos = PositionalEncoding(d_model, tgt_seq_len, dropout)
+
+    # creating the encoder blocks
+    encoder_blocks = []
+    for _ in range(N):
+        encoder_self_attention_block = MultiHeadAttentionBlock(d_model, h, dropout)
+        feed_forward_block = FeedForwardBlock(d_model, d_ff, dropout)
+        encoder_block = EncoderBlock(encoder_self_attention_block, feed_forward_block,dropout)
+        encoder_blocks.append(encoder_block)
+
+    # creating the decoder blocks
+    decoder_blocks = []
+    for _ in range(N):
+        decoder_self_attention_block = MultiHeadAttentionBlock(d_model, h, dropout)
+        decoder_cross_attention_block = MultiHeadAttentionBlock(d_model, h, dropout)
+        feed_forward_block = FeedForwardBlock(d_model, d_ff, dropout)
+        decoder_block = DecoderBlock(decoder_self_attention_block, decoder_cross_attention_block, feed_forward_block, dropout)
+        decoder_blocks.append(decoder_block)
+
+    # creating encoder and decoder
+    encoder = Encoder(nn.ModuleList(encoder_blocks))
+    decoder = Decoder(nn.ModuleList(decoder_blocks))
+
+    # creating the projection layer
+    projection_layer = ProjectionLayer(d_model, tgt_vocab_size)
+
+    # crating the transformer
+    transformer = Transformer(encoder, decoder, src_embed, tgt_embed, src_pos, tgt_pos, projection_layer)
+
+    # Initialising the parameters
+    """
+    Initialising parameters is very important for faster and efficient training of the model.
+    If we will randomly initialise the parameters then the model will take time to learn the paramters
+    There exists method to efficiently initialise the paramters and 'xavier_uniform' is one of those parameter
+    initialisation method.
+    """
+    for p in transformer.parameters():
+        if p.dim() > 1:
+            nn.init.xavier_uniform_(p)
+
+    return transformer
