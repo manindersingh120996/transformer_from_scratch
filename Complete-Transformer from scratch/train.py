@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+from torch.utils.data import Dataset, DataLoader, random_split
 
 # this is the only thing for which we will beusing external library like 
 # hugging face, just to take dataset for training as we can't build very
@@ -45,4 +46,22 @@ def get_or_build_tokenizer(config, ds, lang):
     else:
         tokenizer = Tokenizer.from_file(str(tokenizer_path))
     return tokenizer
+
+def get_ds(config):
+    """
+    Loading datasert which takes the configuration of the model
+    """
+    ds_raw = load_dataset('opus_books', f'{config["lang_src"]}-{config["lang_tgt"]}',
+                    split='train')
+
+    # building tokenizer 
+    tokenizer_src = get_or_build_tokenizer(config, ds_raw, config['lang_src'])
+    tokenizer_tgt = get_or_build_tokenizer(config, ds_raw, config['lang_tgt'])
+
+    # spllitng data to 90% training and 10% to validation
+    train_ds_size = int(0.9 * len(ds_raw))
+    val_ds_size = len(ds_raw) - train_ds_size
+    # method random_split is spliting method from pytorch to split
+    # the dataset into train and validation size mentioned
+    train_ds_size, val_ds_raw = random_split(ds_raw, [train_ds_size, val_ds_size])
 
