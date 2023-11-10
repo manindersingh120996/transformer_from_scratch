@@ -63,5 +63,7 @@ def get_ds(config):
     val_ds_size = len(ds_raw) - train_ds_size
     # method random_split is spliting method from pytorch to split
     # the dataset into train and validation size mentioned
-    train_ds_size, val_ds_raw = random_split(ds_raw, [train_ds_size, val_ds_size])
+    train_ds_raw, val_ds_raw = random_split(ds_raw, [train_ds_size, val_ds_size])
+
+    
 
