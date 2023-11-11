@@ -5,6 +5,7 @@ from torch.utils.data import Dataset, DataLoader, random_split
 # this is the only thing for which we will beusing external library like 
 # hugging face, just to take dataset for training as we can't build very
 # large dataset for the required task
+from dataset import BilingualDataset, causal_mask
 
 from datasets import load_dataset
 from tokenizers import Tokenizer
@@ -65,5 +66,28 @@ def get_ds(config):
     # the dataset into train and validation size mentioned
     train_ds_raw, val_ds_raw = random_split(ds_raw, [train_ds_size, val_ds_size])
 
-    
+    train_ds = BilingualDataset(train_ds_raw, tokenizer_src,tokenizer_tgt,
+                        config['lang_src'],config['lang_tgt'], config['seq_len'])
+    val_ds = BilingualDataset(val_ds_raw, tokenizer_src,tokenizer_tgt,
+                        config['lang_src'],config['lang_tgt'], config['seq_len'])
+
+    max_len_src = 0
+    max_len_tgt = 0
+
+    for item in ds_raw:
+        src_ids = tokenizer_src.encode(item['translation'][config['lang_src']]).ids
+        tgt_ids = tokenizer_tgt.encode(item['translation'][config['lang_tgt']]).ids
+        max_len_src = max(max_len_src,len(src_ids))
+        max_len_tgt = max(max_len_tgt,len(tgt_ids))
+
+    print(f"Max length of source sentence : {max_len_src}")
+    print(f"Max length of target sentence : {max_len_tgt}")
+
+    train_dataloader = DataLoader(train_ds, batch_size=config['batch_size'], shuffle=True)
+    val_dataloader = DataLoader(val_ds, batch_size=1, shuffle=True)
+
+    return train_dataloader,val_dataloader,tokenizer_src,tokenizer_tgt
+
+
+
 

@@ -80,6 +80,12 @@ class BilingualDataset(Dataset):
             # but we don't want to include them in training and ignore them, thus encoder_mask
             "encoder_mask" : (encoder_input != self.pad_token).unsqueeze(0).unsqueeze(0).int(), #(1,1, Seq_Len)
             # for DECODER we need SPECIAL MASK, that is each word can only look previous words and non padding words only
-            "decoder_mask" : (decoder_input != self.pad_token).unsqueeze(0).unsqeeze(0).int() & causal_mask(decoder_input.size(0)) # (1, Seq_len) & (1, Seq_len, Seq_len)
+            "decoder_mask" : (decoder_input != self.pad_token).unsqueeze(0).unsqeeze(0).int() & causal_mask(decoder_input.size(0)), # (1, Seq_len) & (1, Seq_len, Seq_len)
+            "label": label, #(Seq_len)
+            "src_text" : src_text,
+            "tgt_text" : tgt_text
         }
 
+def causal_mask(size):
+    mask = torch.triu(torch.ones(1, size, size), diagonal=1).type(torch.int)
+    return mask == 0
