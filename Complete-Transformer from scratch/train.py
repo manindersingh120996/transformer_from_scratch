@@ -1,3 +1,4 @@
+# pylint: disable=no-member
 import torch
 import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader, random_split
@@ -126,7 +127,7 @@ def train_model(config):
     # to make the model less prone to overfitting
     loss_fn = nn.CrossEntropyLoss(ignore_index=tokenizer_src.token_to_id('[PAD]'), label_smoothing=0.1).to(device)
 
-    
+
 
 
 
