@@ -10,7 +10,7 @@ class InputEmbeddings(nn.Module):
     d_model : dimension of embeddings
     vocab_size : size of vocabulary
     """
-    def __init(self, d_model:int,vocab_size:int):
+    def __init__(self, d_model:int,vocab_size:int):
         # super() is used to give access to methods and properties
         # of a parent or sibling class.
         super().__init__()
@@ -154,7 +154,7 @@ class MultiHeadAttentionBlock(nn.Module):
         super().__init__()
         self.d_model = d_model
         self.heads = heads
-        assert d_model % heads == 0, "d_model is not divisible by h"
+        assert d_model % heads == 0, "d_model is not divisible by heads"
         
         self.d_k = d_model // heads
 
@@ -170,11 +170,11 @@ class MultiHeadAttentionBlock(nn.Module):
     def attention(query, key, value,mask,dropout:nn.Dropout):
         d_k = query.shape[-1]
 
-        # (batch, h , Seq_len, d_k) --> (batch, h , Seq_Len, Seq_Len)
+        # (batch, heads , Seq_len, d_k) --> (batch, heads , Seq_Len, Seq_Len)
         attention_scores = (query @ key.transpose(-2,-1)) / math.sqrt(d_k)
         if mask is not None:
             attention_scores.masked_fill(mask == 0, -1e9)
-        attention_scores = attention_scores.softmax(dim = -1) #(Batch, h, seq_len, seq_len)
+        attention_scores = attention_scores.softmax(dim = -1) #(Batch, heads, seq_len, seq_len)
         if dropout is not None:
             attention_scores = dropout(attention_scores)
 
@@ -207,7 +207,7 @@ class MultiHeadAttentionBlock(nn.Module):
 
 
         # (Batch, heads, seq_len, d_k) --> (batch, seq_len, heads, d_k) --> (Batch, seq_len, d_model)
-        x = x.transpose(1, 2).contguous().view(x.shape[0], -1, self.h * self.d_k)
+        x = x.transpose(1, 2).contiguous().view(x.shape[0], -1, self.heads * self.d_k)
 
         # (Batch, Seq_len, d_model) --> (Batch, seq_len, d_model)
         return self.w_o(x)
@@ -369,13 +369,14 @@ class Transformer(nn.Module):
 
 # Now building transformer given all the hyper parameters
 def build_transformer(src_vocab_size: int, tgt_vocab_size: int, src_seq_len: int, tgt_seq_len: int,
-                        d_model: int = 512, N: int = 6, h: int= 8, dropout: float = 0.1, d_ff: int = 2048) -> Transformer:
+                        d_model: int = 512, N: int = 6, heads: int= 8, dropout: float = 0.1, d_ff: int = 2048) -> Transformer:
     """
     N = no. of encoders
-    h = no. of heads
+    heads = no. of heads
     d_model = encoding dimension
     """
     # creating embedding layers 
+    print('****()()()()()',src_vocab_size)
     src_embed = InputEmbeddings(d_model, src_vocab_size)
     tgt_embed = InputEmbeddings(d_model, tgt_vocab_size)
 
@@ -386,7 +387,7 @@ def build_transformer(src_vocab_size: int, tgt_vocab_size: int, src_seq_len: int
     # creating the encoder blocks
     encoder_blocks = []
     for _ in range(N):
-        encoder_self_attention_block = MultiHeadAttentionBlock(d_model, h, dropout)
+        encoder_self_attention_block = MultiHeadAttentionBlock(d_model, heads, dropout)
         feed_forward_block = FeedForwardBlock(d_model, d_ff, dropout)
         encoder_block = EncoderBlock(encoder_self_attention_block, feed_forward_block,dropout)
         encoder_blocks.append(encoder_block)
@@ -394,8 +395,8 @@ def build_transformer(src_vocab_size: int, tgt_vocab_size: int, src_seq_len: int
     # creating the decoder blocks
     decoder_blocks = []
     for _ in range(N):
-        decoder_self_attention_block = MultiHeadAttentionBlock(d_model, h, dropout)
-        decoder_cross_attention_block = MultiHeadAttentionBlock(d_model, h, dropout)
+        decoder_self_attention_block = MultiHeadAttentionBlock(d_model, heads, dropout)
+        decoder_cross_attention_block = MultiHeadAttentionBlock(d_model, heads, dropout)
         feed_forward_block = FeedForwardBlock(d_model, d_ff, dropout)
         decoder_block = DecoderBlock(decoder_self_attention_block, decoder_cross_attention_block, feed_forward_block, dropout)
         decoder_blocks.append(decoder_block)
