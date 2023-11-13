@@ -156,7 +156,7 @@ def train_model(config):
 
 
             # Backpropagate the loss
-            loss.backwards()
+            loss.backward()
 
             # update the weights of the model
             optimizer.step()

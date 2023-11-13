@@ -363,7 +363,7 @@ class Transformer(nn.Module):
         tgt = self.tgt_pos(tgt)
         return self.decoder(tgt, encoder_output, src_mask, tgt_mask)
 
-    def projection(self, x):
+    def project(self, x):
         return self.projection_layer(x)
 
 
