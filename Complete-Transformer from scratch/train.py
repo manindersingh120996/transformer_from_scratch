@@ -81,6 +81,32 @@ def run_validation(model, validation_ds, tokenizer_src, tokenizer_tgt, max_len, 
 
             assert encoder_input.size(0) == 1, "Batch size must be 1 for validation"
 
+            model_out = greedy_decode(model, encoder_input, encoder_mask, tokenizer_src,
+                                        tokenizer_tgt, max_len, device)
+            
+            source_text = batch['src_text'][0]
+            target_text = batch['tgt_text'][0]
+            model_out_text = tokenizer_tgt.decode(model_out.detach().cpu().numpy())
+
+            source_texts.append(source_text)
+            expected.append(target_text)
+            predicted.append(model_out_text)
+
+            # print to the console
+            # we are using print_msg provided by tqdm instead of python's inbuilt print
+            # because we are using tqdm progress bar and using python's print will
+            # interfere in the tqdm progress bar
+            # printing to the console
+            print_msg('-'*console_width)
+            print_msg(f'SOURCE: {source_text}')
+            print_msg(f'TARGET: {target_text}')
+            print_msg(f'PREDICTED: {model_out_text}')
+
+            if count == num_examples:
+                break
+
+    # if write
+
 
 
 
@@ -193,9 +219,10 @@ def train_model(config):
     loss_fn = nn.CrossEntropyLoss(ignore_index=tokenizer_src.token_to_id('[PAD]'), label_smoothing=0.1).to(device)
 
     for epoch in range(initial_epoch, config['num_epochs']):
-        model.train()
+        
         batch_iterator = tqdm(train_dataloader, desc=f'Preprocessing epoch {epoch:02d}')
         for batch in batch_iterator:
+            model.train()
             encoder_input = batch['encoder_input'].to(device) #(B, Seq_Len)
             decoder_input = batch['decoder_input'].to(device) #(B, Seq_Len)
             encoder_mask = batch['encoder_mask'].to(device) #(B,1,1, Seq_Len)
@@ -223,6 +250,9 @@ def train_model(config):
             # update the weights of the model
             optimizer.step()
             optimizer.zero_grad()
+
+            run_validation(model, val_dataloader, tokenizer_src, tokenizer_tgt, config['seq_len'],device,
+                            lambda msg: batch_iterator.write(msg), global_step, writer )
 
             global_step += 1
 
