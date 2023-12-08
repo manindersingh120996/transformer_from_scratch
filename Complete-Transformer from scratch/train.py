@@ -58,11 +58,6 @@ def greedy_decode(model, source, source_mask, tokenizer_src, tokenizer_tgt, max_
     return decoder_input.squeeze(0)
 
 
-
-
-
-
-
 def run_validation(model, validation_ds, tokenizer_src, tokenizer_tgt, max_len, device, print_msg, global_state, writer, num_examples):
     model.eval()
     count = 0
@@ -108,15 +103,11 @@ def run_validation(model, validation_ds, tokenizer_src, tokenizer_tgt, max_len, 
     # if write
 
 
-
-
-
 def get_all_sentences(ds, lang):
     """
     getting all the sentences to prepare dataset of the particular language
 
     """
-
     for item in ds:
         yield item['translation'][lang]
 
