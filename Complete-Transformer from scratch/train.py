@@ -19,8 +19,33 @@ from tokenizers.pre_tokenizers import Whitespace
 from torch.utils.tensorboard import SummaryWriter
 from pathlib import Path
 import warnings
-
+ 
 from tqdm import tqdm
+
+def greedy_decode(model, source, source_mask, tokenizer_src, tokenizer_tgt, max_len, device):
+
+
+
+def run_validation(model, validation_ds, tokenizer_src, tokenizer_tgt, max_len, device, print_msg, global_state, writer, num_examples):
+    model.eval()
+    count = 0
+
+    source_texts = []
+    expected = []
+    predicted = []
+
+    # size of the control window(using the default value)
+    console_width = 80
+    with torch.no_grad():
+        for batch in validation_ds:
+            count += 1
+            encoder_input = batch['encoder_input'].to(device)
+            encoder_mask = batch['encoder_mask'].to(device)
+
+            assert encoder_input.size(0) == 1, "Batch size must be 1 for validation"
+
+
+
 
 
 def get_all_sentences(ds, lang):
