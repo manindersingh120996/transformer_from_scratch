@@ -23,6 +23,10 @@ import warnings
 from tqdm import tqdm
 
 def greedy_decode(model, source, source_mask, tokenizer_src, tokenizer_tgt, max_len, device):
+    """
+    Runs encoder only once.
+    """
+
 
 
 
