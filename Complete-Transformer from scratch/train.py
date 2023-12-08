@@ -26,6 +26,39 @@ def greedy_decode(model, source, source_mask, tokenizer_src, tokenizer_tgt, max_
     """
     Runs encoder only once.
     """
+    sos_idx = tokenizer_tgt.token_to_id('[SOS]')
+    eos_idx = tokenizer_tgt.token_to_id('[EOS]')
+
+    # precompute the encoder output and reuse it for every token we get from the decoder
+    encoder_output = model.encode(source, source_mask)
+    # Initialize the decoder input with the sos token
+    decoder_input = torch.empty(1,1).fill_(sos_idx).type_as(source).to(device)
+    while True:
+        if decoder.size(1) == max_len:
+            break
+
+        # Build mask for the target (decoder input)
+        decoder_mask = causal_mask(decoder_input.size(1)).type_as(source_mask).to(device)
+
+        # Calculating the output
+        out = model.decoder(encoder_output, source_mask, decoder_input, decoder_mask)
+
+        # get the next token
+
+        prob = model.project(out[:,-1])
+        # selecting the token with the maximum probability (because it is a greedy search)
+        _, next_word = torch.max(prob, dim= 1)
+
+        # concatinating output to deoderinput an it becomes input for the next iteration
+        decoder_input = torch.cat([decoder_input, torch.empty(1,1).type_as(source).fill_(next_word.item()).to(device)], dim=1)
+
+        if next_word == eos_idx:
+            break
+
+    return decoder_input.squeeze(0)
+
+
+
 
 
 
