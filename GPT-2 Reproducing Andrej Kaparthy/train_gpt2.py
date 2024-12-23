@@ -326,7 +326,11 @@ torch.set_float32_matmul_precision('high')
 model = GPT(GPTConfig(vocab_size=50304)) # 50304 in order to convert it to nice number that is 
 # number for the power of 2 that is adding fake tokens
 model.to(device)
-# model = torch.compile(model)
+
+# tested with RunPod Linux server and this command is working in RunPOD and efficiently reducing computation time
+#=================
+model = torch.compile(model) 
+#======================
 
 max_lr = 6e-4
 min_lr = max_lr * 0.1
