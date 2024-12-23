@@ -268,13 +268,15 @@ import time
 # buf = torch.tensor(tokens[:B*T + 1])
 # x = buf[:-1].view(B,T)
 # y = buf[1:].view(B,T)
+runpod_absolute_path = "/root/transformer_from_scratch/GPT-2 Reproducing Andrej Kaparthy/input.txt"
 class DataLoaderLite:
     def __init__(self, B, T):
         self.B = B
         self.T = T
         
         # at init load tokens from disk and store them in memory
-        with open('input.txt','r') as f:
+        # with open('input.txt','r') as f:
+        with open(runpod_absolute_path,'r') as f:
             text = f.read()
         enc = tiktoken.get_encoding('gpt2')
         tokens = enc.encode(text)
@@ -301,7 +303,7 @@ class DataLoaderLite:
 
 # gradient accumulation step
 total_batch_size = 524288 # 2 ** 19, ~0.5M, in number of tokens
-B = 4
+B = 8
 T = 1024
 assert total_batch_size % (B * T) == 0 , "make sure total batch is divisible by B * T"
 grad_accum_steps = total_batch_size // (B * T)
