@@ -210,6 +210,11 @@ class GPT(nn.Module):
         
         return model
     
+
+# simple run :
+    # python train_gpt2.py
+# DDP launch for e.g in my case 2 GPUs
+    # torchrun --standalone --nproc_per_node = 2 train_gpt2.py
 from torch.distributed import init_process_group,destroy_process_group
 import os
 # setting up ddp (Distributed Data Parallel)
@@ -270,9 +275,11 @@ import time
 # y = buf[1:].view(B,T)
 runpod_absolute_path = "/root/transformer_from_scratch/GPT-2 Reproducing Andrej Kaparthy/input.txt"
 class DataLoaderLite:
-    def __init__(self, B, T):
+    def __init__(self, B, T, process_rank, num_processes):
         self.B = B
         self.T = T
+        self.process_rank = process_rank
+        self.num_processes = num_processes
         
         # at init load tokens from disk and store them in memory
         # with open('input.txt','r') as f:
@@ -284,20 +291,23 @@ class DataLoaderLite:
         print(f"Loaded {len(self.tokens)} tokens")
         print(f"1 epoch = {len(self.tokens) // (B * T)} batches")
 
-        self.current_position = 0
+        # making changes in below code to accomodate the DDP and MultiGPU training
+        # data splitting
+        self.current_position = self.B * self.T * self.process_rank # for each process it's batch will start at rank times B times T
 
     def next_batch(self):
-
+        # as well as makinng the changes in below code to always load the data on corresponding GPU accordingly 
+        # and current position is advanced in such a way that it get's diffent data from every other GPU always
         B, T = self.B, self.T
         buf = self.tokens[self.current_position : self.current_position + B * T + 1]
         # buf.to(dtype = torch.float16)
         x = (buf[:-1]).view(B,T) # inputs
         y = (buf[1:]).view(B,T) # targets
         # advance the position in the tensor
-        self.current_position += B * T
+        self.current_position += B * T * self.num_processes
         # if loading the next batch would be out of bounds, reset
-        if self.current_position + (B * T + 1) > len(self.tokens):
-            self.current_position = 0
+        if self.current_position + (B * T * self.num_processes + 1) > len(self.tokens):
+            self.current_position = self.B * self.T * self.process_rank
         return x,y
 
 
@@ -315,7 +325,7 @@ print("I am GPU", ddp_rank)
 print("Testing completed")
 import sys;sys.exit(0)
 
-train_loader = DataLoaderLite(B = B, T = T)
+train_loader = DataLoaderLite(B = B, T = T, process_rank = ddp_rank, num_process = ddp_world_size)
 
 # to set floating point calculation change in order to reduce training time
 torch.set_float32_matmul_precision('high')
