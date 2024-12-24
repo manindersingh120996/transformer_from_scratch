@@ -210,34 +210,34 @@ class GPT(nn.Module):
         
         return model
     
-# from torch.distributed import init_process_group,destroy_process_group
-# import os
-# # setting up ddp (Distributed Data Parallel)
-# # torchrun command sets the env variable RANK, Local_RANK, WORLD_SIZE
-# ddp = int(os.environ.get('RANK',-1)) != -1 # is this a ddp run
-# if ddp:
-#     # use of DDP atm demands CUDA, we set the device appropriately according to the rand
-#     assert torch.cuda.is_available(),"For now we need cuda for DDP"
-#     init_process_group(backend='nccl')
-#     ddp_rank = int(os.environ['RANK'])
-#     ddp_local_rank = int(os.environ['LOCAL_RANK'])
-#     ddp_world_size = int(os.environ['WORLD_SIZE'])
-#     device = f'cuda:{ddp_local_rank}'
-#     torch.cuda.set_device(device)
-#     master_process = ddp_rank == 0 #this process will do logging,checkpoint
-# else:
-#     #vanilla , non-DDP run
-#     ddp_rank = 0
-#     ddp_local_rank = 0
-#     ddp_world_size = 1
-#     master_process = True
-#     # attenpt to auto detect the device
-#     device = "cpu"
-#     if torch.cuda.is_available():
-#         device = 'cuda'
-#     elif hasattr(torch.backends,'mps') and torch.backend.mps.is_available():
-#         device = 'mps'
-#     print(f'Using device : {device}')
+from torch.distributed import init_process_group,destroy_process_group
+import os
+# setting up ddp (Distributed Data Parallel)
+# torchrun command sets the env variable RANK, Local_RANK, WORLD_SIZE
+ddp = int(os.environ.get('RANK',-1)) != -1 # is this a ddp run
+if ddp:
+    # use of DDP atm demands CUDA, we set the device appropriately according to the rand
+    assert torch.cuda.is_available(),"For now we need cuda for DDP"
+    init_process_group(backend='nccl')
+    ddp_rank = int(os.environ['RANK'])
+    ddp_local_rank = int(os.environ['LOCAL_RANK'])
+    ddp_world_size = int(os.environ['WORLD_SIZE'])
+    device = f'cuda:{ddp_local_rank}'
+    torch.cuda.set_device(device)
+    master_process = ddp_rank == 0 #this process will do logging,checkpoint
+else:
+    #vanilla , non-DDP run
+    ddp_rank = 0
+    ddp_local_rank = 0
+    ddp_world_size = 1
+    master_process = True
+    # attenpt to auto detect the device
+    device = "cpu"
+    if torch.cuda.is_available():
+        device = 'cuda'
+    elif hasattr(torch.backends,'mps') and torch.backend.mps.is_available():
+        device = 'mps'
+    print(f'Using device : {device}')
 
 
 
@@ -305,13 +305,17 @@ class DataLoaderLite:
 total_batch_size = 524288 # 2 ** 19, ~0.5M, in number of tokens
 B = 8
 T = 1024
-assert total_batch_size % (B * T) == 0 , "make sure total batch is divisible by B * T"
-grad_accum_steps = total_batch_size // (B * T)
-print(f"Total desired batch size : {total_batch_size}")
-print(f"=> calculated gradient accumulation steps: {grad_accum_steps}")
+assert total_batch_size % (B * T * ddp_world_size) == 0 , "make sure total batch is divisible by B * T * ddp_world_size"
+grad_accum_steps = total_batch_size // (B * T * ddp_world_size)
+if master_process:
+    print(f"Total desired batch size : {total_batch_size}")
+    print(f"=> calculated gradient accumulation steps: {grad_accum_steps}")
 
+print("I am GPU", ddp_rank)
+print("Testing completed")
+import sys;sys.exit(0)
 
-train_loader = DataLoaderLite(B = 4, T = 1024)
+train_loader = DataLoaderLite(B = B, T = T)
 
 # to set floating point calculation change in order to reduce training time
 torch.set_float32_matmul_precision('high')
