@@ -217,6 +217,8 @@ class GPT(nn.Module):
     # torchrun --standalone --nproc_per_node = 2 train_gpt2.py
 from torch.distributed import init_process_group,destroy_process_group
 import os
+from torch.nn.parallel import DistributedDataParallel as DDP
+import torch.distributed as dist
 # setting up ddp (Distributed Data Parallel)
 # torchrun command sets the env variable RANK, Local_RANK, WORLD_SIZE
 ddp = int(os.environ.get('RANK',-1)) != -1 # is this a ddp run
@@ -275,11 +277,11 @@ import time
 # y = buf[1:].view(B,T)
 runpod_absolute_path = "/root/transformer_from_scratch/GPT-2 Reproducing Andrej Kaparthy/input.txt"
 class DataLoaderLite:
-    def __init__(self, B, T, process_rank, num_processes):
+    def __init__(self, B, T, process_rank, num_process):
         self.B = B
         self.T = T
         self.process_rank = process_rank
-        self.num_processes = num_processes
+        self.num_processes = num_process
         
         # at init load tokens from disk and store them in memory
         # with open('input.txt','r') as f:
@@ -322,8 +324,8 @@ if master_process:
     print(f"=> calculated gradient accumulation steps: {grad_accum_steps}")
 
 print("I am GPU", ddp_rank)
-print("Testing completed")
-import sys;sys.exit(0)
+# print("Testing completed")
+# import sys;sys.exit(0)
 
 train_loader = DataLoaderLite(B = B, T = T, process_rank = ddp_rank, num_process = ddp_world_size)
 
@@ -345,6 +347,12 @@ model.to(device)
 #=================
 model = torch.compile(model) 
 #======================
+
+# Now after setting up DDP it is required and mandatory to wrap the model in DDP
+if ddp:
+    model = DDP(model, device_ids = [ddp_local_rank])
+raw_model = model.module if ddp else model # always contains the "raw" unwrapped model
+
 
 max_lr = 6e-4
 min_lr = max_lr * 0.1
@@ -373,7 +381,7 @@ def get_lr(it):
 #                               betas = (0.9,0.95),
 #                               eps = 1e-8)
 
-optimizer = model.configure_optimizers(weight_decay = 0.1,
+optimizer = raw_model.configure_optimizers(weight_decay = 0.1,
                                        learning_rate = 6e-4,
                                        device_type = device)
 
@@ -396,7 +404,13 @@ for step in range(max_steps):
         loss = loss / grad_accum_steps
         # print(loss)
         loss_accum += loss.detach()
+        if ddp:
+            model.require_backward_grad_sync = (micro_steps == grad_accum_steps - 1)
         loss.backward() # backward
+    
+    if ddp: # only for the loss accumulated not for synchronising gradients which is done automatically in above line of if ddp:
+        dist.all_reduce(loss_accum,op = dist.ReduceOp.AVG)
+
 
     # import code; code.interact(local=locals())
     # gradient clipping
@@ -409,9 +423,14 @@ for step in range(max_steps):
     torch.cuda.synchronize()
     t1 = time.time()
     dt = (t1-t0) * 1000
-    tokens_per_sec = (train_loader.B * train_loader.T * grad_accum_steps) / (t1-t0)
-    print(f"\nStep {step + 1}| lr {lr:.4e} | loss: {loss_accum.item():.4f} | in time : {dt:.2f}ms\
+    tokens_per_sec = (train_loader.B * train_loader.T * grad_accum_steps * ddp_world_size) / (t1-t0)
+    if master_process:
+        print(f"\nStep {step + 1}| lr {lr:.4e} | loss: {loss_accum.item():.4f} | in time : {dt:.2f}ms\
  | tokens/sec: {tokens_per_sec:.2f} | norm : {norm :.4f}")
+
+if ddp:
+    destroy_process_group()
+
 import sys
 sys.exit(0)
 
