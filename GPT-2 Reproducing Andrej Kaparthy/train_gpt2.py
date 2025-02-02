@@ -275,14 +275,46 @@ import time
 # buf = torch.tensor(tokens[:B*T + 1])
 # x = buf[:-1].view(B,T)
 # y = buf[1:].view(B,T)
+
+
+
 runpod_absolute_path = "/root/transformer_from_scratch/GPT-2 Reproducing Andrej Kaparthy/input.txt"
+
+
+def load_tokens(filename):
+    npt = np.load(filename)
+    npt = npt.astype(np.int32) # added after video
+    ptt = torch.tensor(npt, dtype=torch.long)
+    return ptt
+
+
 class DataLoaderLite:
-    def __init__(self, B, T, process_rank, num_process):
+    def __init__(self, B, T, process_rank, num_process,split):
         self.B = B
         self.T = T
         self.process_rank = process_rank
         self.num_processes = num_process
-        
+        assert split in {'train','val'}
+
+        #get the shard filenames
+        data_root = "edu_fineweb10B"
+        shards = os.listdir(data_root)
+        shards = [s for s in shards if split in s]
+        shards = sorted(shards)
+        shards = [os.path.join(data_root,s) for s in shards]
+        self.shards = shards
+        assert len(shards) > 0, f"no shards found for split {split}"
+        if master_process:
+            print(f"found {len(shards)} shards for split {split}")
+        self.reset()
+
+    def reset(self):
+        # state, init at shard zero
+        self.current_shard = 0
+        self.tokens = load_tokens(self.shards[self.current_shard])
+        self.current_position = self.B * self.T * self.process_rank      
+
+
         # at init load tokens from disk and store them in memory
         # with open('input.txt','r') as f:
         with open(runpod_absolute_path,'r') as f:
@@ -309,7 +341,9 @@ class DataLoaderLite:
         self.current_position += B * T * self.num_processes
         # if loading the next batch would be out of bounds, reset
         if self.current_position + (B * T * self.num_processes + 1) > len(self.tokens):
-            self.current_position = self.B * self.T * self.process_rank
+            self.current_shard = (self.current_shard + 1) % len(self.shards)
+            self.tokens = load_tokens(self.shards[self.current_shard])
+            self.current_position = B * T * self.process_rank
         return x,y
 
 
@@ -327,7 +361,9 @@ print("I am GPU", ddp_rank)
 # print("Testing completed")
 # import sys;sys.exit(0)
 
-train_loader = DataLoaderLite(B = B, T = T, process_rank = ddp_rank, num_process = ddp_world_size)
+# train_loader = DataLoaderLite(B = B, T = T, process_rank = ddp_rank, num_process = ddp_world_size)
+train_loader = DataLoaderLite(B=B, T=T, process_rank=ddp_rank, num_processes=ddp_world_size, split="train")
+val_loader = DataLoaderLite(B=B, T=T, process_rank=ddp_rank, num_processes=ddp_world_size, split="val")
 
 # to set floating point calculation change in order to reduce training time
 torch.set_float32_matmul_precision('high')
@@ -357,7 +393,7 @@ raw_model = model.module if ddp else model # always contains the "raw" unwrapped
 max_lr = 6e-4
 min_lr = max_lr * 0.1
 warmup_steps = 10
-max_steps = 50
+max_steps = 50 # 
 
 def get_lr(it):
     # 1) linear warmup for warmup_iter steps

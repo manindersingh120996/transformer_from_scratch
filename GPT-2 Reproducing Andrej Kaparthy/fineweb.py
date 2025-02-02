@@ -8,81 +8,140 @@
 # Will save shards to the local directory "edu_fineweb10B"
 # """
 
-# import os
-# import multiprocessing as mp
-# import numpy as np
-# import tiktoken
-# from datasets import load_dataset
-# from tqdm import tqdm
+import os
+import multiprocessing as mp
+import numpy as np
+import tiktoken
+from datasets import load_dataset
+from tqdm import tqdm
 
+local_dir = "edu_fineweb10B"
+remote_name = "sample-10BT"
+train_shard_size = 60000000  # 60M tokens per training shard
+val_shard_size = train_shard_size // 2  # Validation shard is half the size of a training shard
+num_train_shards = 3
+num_val_shards = 1
+
+data_cache_dir = os.path.join(os.path.dirname(__file__), local_dir)
+os.makedirs(data_cache_dir, exist_ok=True)
+
+# Load dataset
+fw = load_dataset(
+    "HuggingFaceFW/fineweb-edu", name=remote_name, split="train", streaming=True
+)
+
+# Initialize tokenizer
+enc = tiktoken.get_encoding("gpt2")
+eot = enc._special_tokens["<|endoftext|>"]
+
+def tokenize(doc):
+    tokens = [eot]
+    tokens.extend(enc.encode_ordinary(doc["text"]))
+    tokens_np = np.array(tokens, dtype=np.uint16)
+    return tokens_np
+
+def write_datafile(filename, tokens_np):
+    np.save(filename, tokens_np)
+
+# Process and create shards
+total_shards = num_train_shards + num_val_shards
+shard_sizes = [train_shard_size] * num_train_shards + [val_shard_size] * num_val_shards
+
+token_count = 0
+shard_index = 1
+shard_tokens = np.empty((shard_sizes[shard_index - 1],), dtype=np.uint16)
+progress_bar = tqdm(total=sum(shard_sizes), unit="tokens", desc="Creating shards")
+
+for doc in fw:
+    tokens = tokenize(doc)
+    for token in tokens:
+        if token_count < shard_sizes[shard_index - 1]:
+            shard_tokens[token_count] = token
+            token_count += 1
+            progress_bar.update(1)
+        if token_count == shard_sizes[shard_index - 1]:
+            # Save the shard
+            shard_type = "train" if shard_index <= num_train_shards else "val"
+            filename = os.path.join(data_cache_dir, f"edufineweb_{shard_type}_{shard_index:06d}.npy")
+            write_datafile(filename, shard_tokens[:token_count])
+            print(f"Shard saved to {filename}")
+            
+            # Move to next shard if available
+            shard_index += 1
+            if shard_index > total_shards:
+                break
+            
+            token_count = 0
+            shard_tokens = np.empty((shard_sizes[shard_index - 1],), dtype=np.uint16)
+
+progress_bar.close()
+
+# # Configuration for a single shard
 # local_dir = "edu_fineweb10B"
 # remote_name = "sample-10BT"
-# shard_size = int(1e8) # 100M tokens per shard, total of 100 shards
+# # shard_size = int(1e8)  # 100M tokens per shard
 
-# # create the cache the local directory if it doesn't exist yet
+# # Create the local directory
 # DATA_CACHE_DIR = os.path.join(os.path.dirname(__file__), local_dir)
-# os.makedirs(DATA_CACHE_DIR,exist_ok=True)
+# os.makedirs(DATA_CACHE_DIR, exist_ok=True)
 
-# # download the dataset
-# fw = load_dataset("HuggingFaceFW/fineweb-edu",name = remote_name,split="train")
+# # Load only a small subset of the dataset (enough for one shard)
+# fw = load_dataset(
+#     "HuggingFaceFW/fineweb-edu", name=remote_name, split="train", streaming=True
+# )
 
-# #init the tokenizer
+# # Activate the below code to use Hindi dataset for training as well
+# #code for fineweb-hindi model 
+# # fw = load_dataset(
+# #     "KathirKs/fineweb-edu-hindi", split="train", streaming=True
+# # )
 
+
+# # Roughly Limiting the dataset to ~100MB worth of tokens
+# shard_size = 60000000 # roughly this much tokens will be there
+# subset = fw.take(shard_size)  # Assuming 60000000 samples will fit in 100MB; adjust as needed.
+
+# # Initialize the tokenizer
 # enc = tiktoken.get_encoding("gpt2")
-# eot = enc._special_tokens['<|endoftext|>'] # end of text token
+# eot = enc._special_tokens["<|endoftext|>"]  # End of text token
 
+# # Tokenizer function
 # def tokenize(doc):
-#     # tokenizes a single document and returns a numpy array of uint16 tokens
 #     tokens = [eot]
 #     tokens.extend(enc.encode_ordinary(doc["text"]))
 #     tokens_np = np.array(tokens)
-#     assert (0 <= tokens_np).all() and (tokens_np < 2**16).all(), "tokens dictionary too large for uint16"
-#     tokens_np_uint16 = tokens_np.astype(np.uint16)
-#     return tokens_np_uint16
+#     assert (0 <= tokens_np).all() and (tokens_np < 2**16).all(), "Tokens too large for uint16"
+#     return tokens_np.astype(np.uint16)
 
+# # Write shard to disk
 # def write_datafile(filename, tokens_np):
-#     # writes a numpy array of uint16 tokens to a binary file
-#     # with open(filename,"wb") as f:
-#     #     f.write(tokens_np.tobytes())
 #     np.save(filename, tokens_np)
 
-# # tokenize all documents and write output shards, each of shard_size tokens
+# # Process the subset and create a single shard
+# all_tokens_np = np.empty((shard_size,), dtype=np.uint16)  # Preallocate buffer
+# token_count = 0
 
-# nprocs = max(1,os.cpu_count()/2)
-# with mp.Pool(nprocs) as pool:
-#     shard_index = 0
-#     # preallocate buffer to hold current shard
-#     all_tokens_np = np.empty((shard_size,), dtype=np.uint16)
-#     token_count = 0
-#     progress_bar = None
-#     for tokens in pool.imap(tokenize, fw, chunksize=16):
+# # code for creating progress bar and code execution
+# progress_bar = tqdm(total=shard_size, unit="tokens", desc="Creating single shard")
 
-#         # is there enough space in the current shard for the new tokens ?
-#         if token_count + len(tokens) < shard_size:
-#             # simply append tokens to current shard
-#             all_tokens_np[token_count:token_count+len(tokens)] = tokens
-#             token_count += len(tokens)
+# for doc in subset:
+#     tokens = tokenize(doc)
+#     if token_count + len(tokens) <= shard_size:
+#         # Add tokens to the shard
+#         all_tokens_np[token_count : token_count + len(tokens)] = tokens
+#         token_count += len(tokens)
+#         # updating progress bar
+#         progress_bar.update(len(tokens))
+#     else:
+#         # Stop after completing the first shard
+#         remainder = shard_size - token_count
+#         all_tokens_np[token_count : token_count + remainder] = tokens[:remainder]
+#         progress_bar.update(remainder)
+#         break
 
-#             # updating the progress bar
-#             if progress_bar is None:
-#                 progress_bar = tqdm(total = shard_size, unit = "tokens", desc = f"Shard {shard_index}")
-#             progress_bar.update(len(tokens))
-#         else:
-#             # writing the current shard and start a new one
-#             split = "val" if shard_index == 0 else "train"
-#             filename = os.path.join(DATA_CACHE_DIR, f"edufineweb_{split}_{shard_index:06d}")
-#             # split the document into whatever fits in this shard; remainder goes to next one
-#             remainder = shard_size - token_count
-#             progress_bar.update(remainder)
-#             all_tokens_np[token_count:token_count+remainder] = tokens[:remainder]
-#             write_datafile(filename,all_tokens_np)
-#             shard_index += 1
-#             progress_bar = None
-#             # populate the next shard with the leftovers of the current doc
-#             all_tokens_np[0:len(tokens)-remainder] = tokens[remainder:]
-#             token_count = len(tokens) - remainder
+# progress_bar.close()
 
-#     if token_count != 0:
-#         split = "val" if shard_index == 0 else "train"
-#         filename = os.path.join(DATA_CACHE_DIR, f"edufineweb_{split}_{shard_index:06d}")
-#         write_datafile(filename, all_tokens_np[:token_count])
+# # Save the single shard
+# filename = os.path.join(DATA_CACHE_DIR, "edufineweb_train_000001")
+# write_datafile(filename, all_tokens_np[:token_count])
+# print(f"Shard saved to {filename}")
