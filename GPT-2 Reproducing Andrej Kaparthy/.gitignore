@@ -1,1 +1,4 @@
 *.npy
+model_00040.pt
+model_00080.pt
+model_00120.pt

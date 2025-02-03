@@ -282,8 +282,9 @@ import time
 
 
 
-runpod_absolute_path = "/root/transformer_from_scratch/GPT-2 Reproducing Andrej Kaparthy/input.txt"
-
+# runpod_absolute_path = "/root/transformer_from_scratch/GPT-2 Reproducing Andrej Kaparthy/input.txt"
+runpod_absolute_path = "/root/transformer_from_scratch/GPT-2 Reproducing Andrej Kaparthy/edu_fineweb10B/"
+device_type = "cuda" if device.startswith("cuda") else "cpu"
 
 def load_tokens(filename):
     npt = np.load(filename)
@@ -301,7 +302,7 @@ class DataLoaderLite:
         assert split in {'train','val'}
 
         #get the shard filenames
-        data_root = "edu_fineweb10B"
+        data_root = runpod_absolute_path#"edu_fineweb10B"
         shards = os.listdir(data_root)
         shards = [s for s in shards if split in s]
         shards = sorted(shards)
@@ -358,7 +359,7 @@ class DataLoaderLite:
 
 # gradient accumulation step
 total_batch_size = 262144 # 2 ** 18, ~0.3M, in number of tokens
-B = 16
+B = 32
 T = 1024
 assert total_batch_size % (B * T * ddp_world_size) == 0 , "make sure total batch is divisible by B * T * ddp_world_size"
 grad_accum_steps = total_batch_size // (B * T * ddp_world_size)
@@ -390,7 +391,8 @@ model.to(device)
 
 # tested with RunPod Linux server and this command is working in RunPOD and efficiently reducing computation time
 #=================
-model = torch.compile(model) 
+# model = torch.compile(model) 
+# print("Model is compiled successfully!!!")
 #======================
 
 # Now after setting up DDP it is required and mandatory to wrap the model in DDP
@@ -468,7 +470,8 @@ for step in range(max_steps):
     last_step = (step == max_steps -1)
 
     # =============== VALIDATION STEP =================
-    if step % 10 or last_step:
+    if step % 5 == 0 or last_step:
+        print("inside evaluation")
         model.eval
         print("Inside Validation Step For epoch no. : ",step)
         val_loader.reset()
@@ -477,7 +480,7 @@ for step in range(max_steps):
             val_loss_steps = 8
             for _ in range(val_loss_steps):
                 x,y = val_loader.next_batch()
-                with torch.autocast(device_type = device, dtype=torch.bfloat16):
+                with torch.autocast(device_type = device_type, dtype=torch.bfloat16):
                     logits, loss = model(x.to(device),y.to(device))
                 loss = loss / val_loss_steps
                 val_loss_accum += loss.detach()
@@ -488,20 +491,20 @@ for step in range(max_steps):
             print(f"Validation loss: {val_loss_accum.item():.4f}")
             with open(log_file, "a") as f:
                 f.write(f"{step} val loss {val_loss_accum.item():.4f}\n")
-            if step > 0 and (step % 40 == 0 or last_step):
-                # storing model checkpoints
-                print(f"Creating model Checkpoints at step {step}")
-                checkpoint_path = os.path.join(log_dir, f"model_{step:05d}.pt")
-                checkpoint = {
-                    'model' : raw_model.state_dict(),
-                    'config' : raw_model.config(),
-                    'step' : step,
-                    'val_loss':val_loss_accum.item()
+    if step > 0 and (step % 40 == 0 or last_step):
+        # storing model checkpoints
+        print(f"Creating model Checkpoints at step {step}")
+        checkpoint_path = os.path.join(log_dir, f"model_{step:05d}.pt")
+        checkpoint = {
+            'model' : raw_model.state_dict(),
+            'config' : raw_model.config,
+            'step' : step,
+            'val_loss':val_loss_accum.item()
 
-                    # required to store the state dict in order to restore 
-                    # training at the later point of time
-                }
-                torch.save(checkpoint, checkpoint_path)
+            # required to store the state dict in order to restore 
+            # training at the later point of time
+        }
+        torch.save(checkpoint, checkpoint_path)
 
 ####XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
 
@@ -509,7 +512,7 @@ for step in range(max_steps):
 ######================= CONTENT GENERATION for each 20 steps ================
 
 # CHECKING REQUIRED FOR COMPILE TORCH.COMPILE
-    if (step % 20 == 0 or last_step):
+    if ((step % 20 == 0 and step > 0 ) or last_step):
         model.eval()
         num_return_sequences = 4
         max_length = 32
@@ -522,7 +525,7 @@ for step in range(max_steps):
         while xgen.size(1) <max_length:
             # forward the model to get the logits
             with torch.no_grad():
-                with torch.autocast(device_type = device, dtype = torch.bfloat16):
+                with torch.autocast(device_type = device_type, dtype = torch.bfloat16):
                     logits, loss = model(xgen)
                 # taking the logits at the last position
                 logits = logits[:, -1, :]
@@ -550,7 +553,8 @@ for step in range(max_steps):
 ###===================hella swag evaluation =================
 
     # once in a while evaluate hellaswag
-    if (step % 10 == 0 or last_step):# and (not use_compile):
+    if (step % 10 == 0 or last_step) and False:# and (not use_compile):
+        print("Inside hella swag")
         num_correct_norm = 0
         num_total = 0
         for i, example in enumerate(iterate_examples("val")):
@@ -591,6 +595,7 @@ for step in range(max_steps):
     model.train()
     loss_accum = 0.0    
     optimizer.zero_grad()
+    print("Inside model training")
 
     # gradient accumulation over the micro_steps
     for micro_steps in range(grad_accum_steps):
@@ -628,6 +633,8 @@ for step in range(max_steps):
     if master_process:
         print(f"\nStep {step + 1}| lr {lr:.4e} | loss: {loss_accum.item():.4f} | in time : {dt:.2f}ms\
  | tokens/sec: {tokens_per_sec:.2f} | norm : {norm :.4f}")
+        with open(log_file, "a") as f:
+            f.write(f"{step} train {loss_accum.item():.6f}\n")
 
 if ddp:
     destroy_process_group()
