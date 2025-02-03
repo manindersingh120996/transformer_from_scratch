@@ -4,6 +4,8 @@ import torch.nn as nn
 from torch.nn import functional as F
 import math
 import code
+import numpy as np
+
 
 # code.interact(local=locals())
 # torch.set_default_dtype(torch.half)
@@ -221,6 +223,7 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 import torch.distributed as dist
 # setting up ddp (Distributed Data Parallel)
 # torchrun command sets the env variable RANK, Local_RANK, WORLD_SIZE
+
 ddp = int(os.environ.get('RANK',-1)) != -1 # is this a ddp run
 if ddp:
     # use of DDP atm demands CUDA, we set the device appropriately according to the rand
@@ -283,7 +286,7 @@ runpod_absolute_path = "/root/transformer_from_scratch/GPT-2 Reproducing Andrej 
 
 def load_tokens(filename):
     npt = np.load(filename)
-    npt = npt.astype(np.int32) # added after video
+    npt = npt.astype(np.int32) 
     ptt = torch.tensor(npt, dtype=torch.long)
     return ptt
 
@@ -317,13 +320,18 @@ class DataLoaderLite:
 
         # at init load tokens from disk and store them in memory
         # with open('input.txt','r') as f:
-        with open(runpod_absolute_path,'r') as f:
-            text = f.read()
-        enc = tiktoken.get_encoding('gpt2')
-        tokens = enc.encode(text)
-        self.tokens = torch.tensor(tokens)
-        print(f"Loaded {len(self.tokens)} tokens")
-        print(f"1 epoch = {len(self.tokens) // (B * T)} batches")
+
+######## Test code for testing tiny shakespear
+
+        # with open(runpod_absolute_path,'r') as f:
+        #     text = f.read()
+        # enc = tiktoken.get_encoding('gpt2')
+        # tokens = enc.encode(text)
+        # self.tokens = torch.tensor(tokens)
+        # print(f"Loaded {len(self.tokens)} tokens")
+        # print(f"1 epoch = {len(self.tokens) // (B * T)} batches")
+
+######## xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 
         # making changes in below code to accomodate the DDP and MultiGPU training
         # data splitting
@@ -348,8 +356,8 @@ class DataLoaderLite:
 
 
 # gradient accumulation step
-total_batch_size = 524288 # 2 ** 19, ~0.5M, in number of tokens
-B = 8
+total_batch_size = 262144 # 2 ** 18, ~0.3M, in number of tokens
+B = 16
 T = 1024
 assert total_batch_size % (B * T * ddp_world_size) == 0 , "make sure total batch is divisible by B * T * ddp_world_size"
 grad_accum_steps = total_batch_size // (B * T * ddp_world_size)
@@ -362,8 +370,8 @@ print("I am GPU", ddp_rank)
 # import sys;sys.exit(0)
 
 # train_loader = DataLoaderLite(B = B, T = T, process_rank = ddp_rank, num_process = ddp_world_size)
-train_loader = DataLoaderLite(B=B, T=T, process_rank=ddp_rank, num_processes=ddp_world_size, split="train")
-val_loader = DataLoaderLite(B=B, T=T, process_rank=ddp_rank, num_processes=ddp_world_size, split="val")
+train_loader = DataLoaderLite(B=B, T=T, process_rank=ddp_rank, num_process=ddp_world_size, split="train")
+val_loader = DataLoaderLite(B=B, T=T, process_rank=ddp_rank, num_process=ddp_world_size, split="val")
 
 # to set floating point calculation change in order to reduce training time
 torch.set_float32_matmul_precision('high')
@@ -392,8 +400,8 @@ raw_model = model.module if ddp else model # always contains the "raw" unwrapped
 
 max_lr = 6e-4
 min_lr = max_lr * 0.1
-warmup_steps = 10
-max_steps = 50 # 
+warmup_steps = 30 
+max_steps = 200 # 
 
 def get_lr(it):
     # 1) linear warmup for warmup_iter steps
@@ -422,8 +430,109 @@ optimizer = raw_model.configure_optimizers(weight_decay = 0.1,
                                        device_type = device)
 
 from tqdm.auto import tqdm
+import tiktoken
+enc = tiktoken.get_encoding('gpt2')
+log_dir = 'logs'
+os.makedirs(log_dir,exist_ok=True)
+log_file = os.path.join(log_dir,f"log.txt")
+
+with open(log_file,"w") as f:
+    pass
+
+
+#not yet used but will be used if required
+device_type = "cuda" if device.startswith("cuda") else "cpu"
+
 for step in range(max_steps):
     t0 = time.time()
+
+    last_step = (step == max_steps -1)
+
+    # =============== VALIDATION STEP =================
+    if step % 10 or last_step:
+        model.eval
+        print("Inside Validation Step For epoch no. : ",step)
+        val_loader.reset()
+        with torch.no_grad():
+            val_loss_accum = 0.0
+            val_loss_steps = 8
+            for _ in range(val_loss_steps):
+                x,y = val_loader.next_batch()
+                with torch.autocast(device_type = device, dtype=torch.bfloat16):
+                    logits, loss = model(x.to(device),y.to(device))
+                loss = loss / val_loss_steps
+                val_loss_accum += loss.detach()
+        
+        if ddp:
+            dist.all_reduce(val_loss_accum, op = dist.ReduceOp.AVG)
+        if master_process:
+            print(f"Validation loss: {val_loss_accum.item():.4f}")
+            with open(log_file, "a") as f:
+                f.write(f"{step} val loss {val_loss_accum.item():.4f}\n")
+            if step > 0 and (step % 40 == 0 or last_step):
+                # storing model checkpoints
+                print(f"Creating model Checkpoints at step {step}")
+                checkpoint_path = os.path.join(log_dir, f"model_{step:05d}.pt")
+                checkpoint = {
+                    'model' : raw_model.state_dict(),
+                    'config' : raw_model.config(),
+                    'step' : step,
+                    'val_loss':val_loss_accum.item()
+
+                    # required to store the state dict in order to restore 
+                    # training at the later point of time
+                }
+                torch.save(checkpoint, checkpoint_path)
+
+####XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
+
+
+######================= CONTENT GENERATION for each 20 steps ================
+
+# CHECKING REQUIRED FOR COMPILE TORCH.COMPILE
+    if (step % 20 == 0 or last_step):
+        model.eval()
+        num_return_sequences = 4
+        max_length = 32
+        tokens = enc.encode("Hello, I'm a language model,")
+        tokens = torch.tensor(tokens,dtype = torch.long)
+        tokens = tokens.unsqueeze(0).repeat(num_return_sequences,1)
+        xgen = tokens.to(device)
+        sample_rng = torch.Generator(device = device)
+        sample_rng.manual_seed(42 + ddp_rank)
+        while xgen.size(1) <max_length:
+            # forward the model to get the logits
+            with torch.no_grad():
+                with torch.autocast(device_type = device, dtype = torch.bfloat16):
+                    logits, loss = model(xgen)
+                # taking the logits at the last position
+                logits = logits[:, -1, :]
+                # getting the probabilites
+                probs = F.softmax(logits, dim = -1)
+                # top-k sampling of 50
+                topk_probs, topk_indices = torch.topk(probs, 50, dim=-1)
+                # selecting the token from the top-k probabilites
+                # note: multinomial does not demand the input to sum to 1
+                ix = torch.multinomial(topk_probs, 1, generator = sample_rng)
+                # gathering the corresponding indices 
+                xcol = torch.gather(topk_indices, -1, ix)
+                # appending to the sequence
+                xgen = torch.cat((xgen,xcol), dim = 1)
+
+            # printing the generated text\
+            for i in range(num_return_sequences):
+                tokens = xgen[i, :max_length].tolist()
+                decode = enc.decode(tokens)
+                print(f"rank {ddp_rank} sample {i}: {decode}")
+
+
+
+    
+
+
+
+    #===================== MODEL TRAIN CODE =========================
+    model.train()
     loss_accum = 0.0    
     optimizer.zero_grad()
 
