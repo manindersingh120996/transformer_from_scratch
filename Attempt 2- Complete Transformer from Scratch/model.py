@@ -1,0 +1,106 @@
+import torch
+import torch.nn as nn
+import math
+from torch import functional as F
+
+class InputEmbeddings(nn.Module):
+    
+    def __init__(self,
+                 d_model : int,
+                 vocab_size : int):
+        super().__init__()
+        self.d_model = d_model
+        self.vocab_size = vocab_size
+        self.embeddings = nn.Embedding(vocab_size,d_model)
+
+    def forward(self,x):
+        return self.embeddings(x) * math.sqrt(self.d_model)
+    
+class PositionalEncodding(nn.Module):
+    def __init__(self,
+                 d_model : int,
+                 seq_len : int,
+                 dropout : float):
+        super().__init__()
+        self.d_model = d_model
+        self.seq_len = seq_len
+        self.dropout = dropout
+
+        # mateix of shape (seq_len,d_model) to accormodate each word in a sequence
+        pe = torch.zeros(seq_len,d_model)
+        # creating a vector of shape (seq_len,1)
+        position = torch.arange(0,seq_len, dtype = torch.float).unsqueeze(1) # numerator term as per paper's formula
+        div_term = torch.exp(torch.arange(0,d_model,2).float() * (-math.log(10000.0)/d_model)) # dennominator term as per paper's formula
+        # aplying sin to the even and cos to the odd position
+        pe[:,0::2] = torch.sin(position * div_term)
+        pe[:,1::2] = torch.cos(position * div_term)
+
+        # chaing shape of positional encoding to accomodate the batch dimension
+        pe = pe.unsqueeze(0) # 1,seq_len, d_model
+        
+        # It tells PyTorch "this tensor pe is part of the model, but it is not a learnable parameter."
+        self.register_buffer('pe',pe)
+
+    def forward(self, x):
+        x = x + (self.pe[:, :x.shape[1], :]).requires_grad_(False) # so that model knows that these parameters stays untrainable
+        return self.dropout(x)
+
+class LayerNormalisation(nn.Module):
+
+    def __init__(self, eps: float = 10**-6) -> None:
+        super().__init__()
+        self.eps = eps
+        self.alpha = nn.Parameter(torch.ones(1)) # it iwill get multiplied
+        self.bias = nn.Parameter(torch.ones(1)) # it will get added
+
+    def forward(self, x):
+        mean = x.mean(dim = -1, keepdim = True)
+        std = x.std(dim = -1, keepdim = True)
+        return self.alpha * (x - mean)/(std + self.eps) + self.bias
+
+class FeedForwardBlock(nn.Module):
+    def __init__(self,d_model:int,
+                 d_ff: int,
+                 dropout: float):
+        super().__init__()
+        self.ll1 = nn.Linear(d_model,d_ff)
+        self.relu = nn.ReLU()   # if it causes issue then to be replace by torch.relu()
+        self.dropout = nn.Dropout(dropout)
+        self.ll2 = nn.Linear(d_ff,d_model)
+
+    def forward(self,x):
+        return self.ll2(self.dropout(self.relu(self.ll1(x))))
+    
+class MultiHeadAttentionBlock(nn.Module):
+    def __init__(self,
+                 h:int,
+                 d_model : int,
+                 dropout: float
+                 ) -> None:
+        super().__init__()
+        self.d_model = d_model
+        self.h = h
+        assert d_model % h == 0, "d_model is not divisible by h"
+
+        self.d_k = d_model // h # dimension of head head
+        self.w_k = nn.Linear(d_model, d_model)
+        self.w_v = nn.Linear(d_model, d_model)
+        self.w_q = nn.Linear(d_model, d_model)
+
+        self.w_o = nn.Linear(d_model, d_model)
+        self.dropout = nn.Dropout(dropout)
+
+    @staticmethod
+    def attention(query, key, value, mask, dropout: nn.Dropout):
+        d_k = query.shape[-1]
+
+        # Batch_size, h, seq_len, d_k -> (Batch_size, h, Seq_len, seq_len)
+        attention_scores = (query @ key.transpose(-2,-1)) / math.sqrt(d_k) # QUERY AND KEY PRODUCT
+        if mask is not None:
+            attention_scores.masked_fill(mask == 0, -1e9)
+        attention_scores = attention_scores.softmax(dim=-1)
+        if dropout is not None:
+            attention_scores = dropout(attention_scores)
+
+        return (attention_scores @ value), attention_scores
+
