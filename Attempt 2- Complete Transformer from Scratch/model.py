@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import math
 from torch import functional as F
+# dataset we will be using to train the model -> cfilt/iitb-english-hindi
 
 class InputEmbeddings(nn.Module):
     
