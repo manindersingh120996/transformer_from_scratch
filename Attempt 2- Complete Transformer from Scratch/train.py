@@ -21,6 +21,7 @@ def get_all_sentences(ds,lang):
 
 def get_or_build_tokenizer(config, ds,lang,):
     tokenizer_path = Path(config['tokenizer_file'].format(lang))
+    print("Starting building TOkenizer for ->", lang)
     if not Path.exists(tokenizer_path):
         tokenizer = Tokenizer(WordLevel(unk_token='[UNK]'))
         tokenizer.pre_tokenizer = Whitespace()
@@ -29,10 +30,12 @@ def get_or_build_tokenizer(config, ds,lang,):
         tokenizer.save(str(tokenizer_path))
     else:
         tokenizer = Tokenizer.from_file(str(tokenizer_path))
+    print("Tokenizer Building Completed")
     return tokenizer
 
 def get_ds(config):
     ds_raw = load_dataset('cfilt/iitb-english-hindi',split='train')
+    print("Dataset Loaded...")
 
     #building tokenizer
     tokenizer_src = get_or_build_tokenizer(config,ds_raw, config['lang_src'])
@@ -47,31 +50,41 @@ def get_ds(config):
 
     ds_raw = ds_raw.filter(is_valid)
     filtered_data = list(ds_raw)
+    filtered_data = filtered_data[:100]
+    print(f"Dataset Filtered for sentences having length less then {config['seq_len']}")
     print(f"Len of Data Set : {len(filtered_data)}")
+    writer = SummaryWriter(config['experiment_name'])
+    writer.add_scalar("Dataset Used for training Size : " ,len(filtered_data))
 
     # train val split 90:10
-    train_ds_size = int(0.9 * len(ds_raw))
-    val_ds_size = len(ds_raw) - train_ds_size
+    train_ds_size = int(0.9 * len(filtered_data))
+    val_ds_size = len(filtered_data) - train_ds_size
     train_ds_raw, val_ds_raw = random_split(filtered_data, [train_ds_size,val_ds_size])
 
     train_ds = BilingualDataset(train_ds_raw, tokenizer_src, tokenizer_tgt, config['lang_src'], config['lang_tgt'], config['seq_len'])
     val_ds = BilingualDataset(val_ds_raw, tokenizer_src, tokenizer_tgt, config['lang_src'], config['lang_tgt'], config['seq_len'])
+    print("Dataset devided into train and eval")
 
 
     max_len_src = 0
     max_len_tgt = 0
 
-    for item in ds_raw:
+    print(f"In a step to detect the max length of source and target sentences...\nIt can take some time...")
+    for item in tqdm(filtered_data):
         src_ids = tokenizer_src.encode(item['translation'][config['lang_src']]).ids
         tgt_ids = tokenizer_tgt.encode(item['translation'][config['lang_tgt']]).ids
         max_len_src = max(max_len_src,len(src_ids))
         max_len_tgt = max(max_len_tgt,len(tgt_ids))
+    print('\n')
 
     print(f'Max length of soruce sentence: {max_len_src}')
     print(f'Max length of soruce sentence: {max_len_tgt}')
+    writer.add_scalar("Max length of soruce sentence:" ,max_len_src)
+    writer.add_scalar("Max length of target sentence:" ,max_len_tgt)
 
     train_dataloader = DataLoader(train_ds,batch_size=config['batch_size'], shuffle=True)
     val_dataloader = DataLoader(val_ds,batch_size=1, shuffle=True)
+    print("Data loader, Source tokenizer and target tokenizer created...")
 
     return train_dataloader, val_dataloader, tokenizer_src, tokenizer_tgt
 
@@ -79,10 +92,13 @@ def get_ds(config):
 def get_model(config,
               vocab_src_len,
               vocab_tgt_len,):
+    print("Started Creating model...")
     model = build_transformer(vocab_src_len,vocab_tgt_len,config['seq_len'], config['seq_len'], config['d_model'])
+    print("Model created and loaded successfully using 'build_transformer' function...")
     return model
 
 def train_model(config):
+    
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"Using device : {device}")
     
@@ -108,7 +124,9 @@ def train_model(config):
         global_step = state['global_step']
 
     loss_fn = nn.CrossEntropyLoss(ignore_index=tokenizer_src.token_to_id('[PAD]'), label_smoothing=0.1).to(device)
-
+    print(f"Started model training...")
+    writer.add_text("Model Training Paramters and details",str(config))
+    writer.flush()
     for epoch in range(initial_epoch,config['num_epochs']):
         model.train()
         batch_iterator = tqdm(train_dataloader, desc=f"Processing epoch {epoch:02d}")
@@ -144,13 +162,14 @@ def train_model(config):
             optimizer.zero_grad()
 
         # saving the model at the end of each epoch
-        model_filename = get_weights_file_path(config, f'{epoch:02d}')
-        torch.save({
-            'epoch' : epoch,
-            'model_state_dict' : model.state_dict(),
-            'optimizer_state_dict' : optimizer.state_dict(),
-            'global_step': global_step
-        }, model_filename)
+        if epoch % config['save_every'] == 0:
+            model_filename = get_weights_file_path(config, f'{epoch:02d}')
+            torch.save({
+                'epoch' : epoch,
+                'model_state_dict' : model.state_dict(),
+                'optimizer_state_dict' : optimizer.state_dict(),
+                'global_step': global_step
+            }, model_filename)
 
 
 if __name__ == '__main__':
