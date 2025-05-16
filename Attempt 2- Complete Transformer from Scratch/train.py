@@ -23,7 +23,7 @@ def get_or_build_tokenizer(config, ds,lang,):
     tokenizer_path = Path(config['tokenizer_file'].format(lang))
     if not Path.exists(tokenizer_path):
         tokenizer = Tokenizer(WordLevel(unk_token='[UNK]'))
-        tokenizer.pre_tokenizer() = Whitespace()
+        tokenizer.pre_tokenizer = Whitespace()
         trainer = WordLevelTrainer(special_tokens=["[UNK]","[PAD]","[SOS]","[EOS]"],min_frequency=2)
         tokenizer.train_from_iterator(get_all_sentences(ds,lang),trainer = trainer)
         tokenizer.save(str(tokenizer_path))
@@ -37,11 +37,22 @@ def get_ds(config):
     #building tokenizer
     tokenizer_src = get_or_build_tokenizer(config,ds_raw, config['lang_src'])
     tokenizer_tgt = get_or_build_tokenizer(config,ds_raw,config['lang_tgt'])
+    seq_limit = config['seq_len'] - 10
+
+    # Filter sentences that are too long
+    def is_valid(example):
+        src_ids = tokenizer_src.encode(example['translation'][config['lang_src']]).ids
+        tgt_ids = tokenizer_tgt.encode(example['translation'][config['lang_tgt']]).ids
+        return len(src_ids) <= seq_limit and len(tgt_ids) <= seq_limit
+
+    ds_raw = ds_raw.filter(is_valid)
+    filtered_data = list(ds_raw)
+    print(f"Len of Data Set : {len(filtered_data)}")
 
     # train val split 90:10
     train_ds_size = int(0.9 * len(ds_raw))
     val_ds_size = len(ds_raw) - train_ds_size
-    train_ds_raw, val_ds_raw = random_split(ds_raw, [train_ds_size,val_ds_size])
+    train_ds_raw, val_ds_raw = random_split(filtered_data, [train_ds_size,val_ds_size])
 
     train_ds = BilingualDataset(train_ds_raw, tokenizer_src, tokenizer_tgt, config['lang_src'], config['lang_tgt'], config['seq_len'])
     val_ds = BilingualDataset(val_ds_raw, tokenizer_src, tokenizer_tgt, config['lang_src'], config['lang_tgt'], config['seq_len'])

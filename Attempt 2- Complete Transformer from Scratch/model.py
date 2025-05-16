@@ -25,7 +25,7 @@ class PositionalEncodding(nn.Module):
         super().__init__()
         self.d_model = d_model
         self.seq_len = seq_len
-        self.dropout = dropout
+        self.dropout = nn.Dropout(dropout)
 
         # mateix of shape (seq_len,d_model) to accormodate each word in a sequence
         pe = torch.zeros(seq_len,d_model)
@@ -74,14 +74,14 @@ class FeedForwardBlock(nn.Module):
     
 class MultiHeadAttentionBlock(nn.Module):
     def __init__(self,
-                 h:int,
                  d_model : int,
+                 h:int,
                  dropout: float
                  ) -> None:
         super().__init__()
         self.d_model = d_model
         self.h = h
-        assert d_model % h == 0, "d_model is not divisible by h"
+        assert d_model % h == 0, f"d_model is not divisible by h d_model :{self.d_model}, \n head : {self.h}"
 
         self.d_k = d_model // h # dimension of head head
         self.w_k = nn.Linear(d_model, d_model)
@@ -113,7 +113,7 @@ class MultiHeadAttentionBlock(nn.Module):
         # batch_size,seq_len,d_model -> batch_size,seq_len,head,d_k -> batch_size, h, seq_len,d_k
         query = query.view(query.shape[0], query.shape[1], self.h, self.d_k).transpose(1,2)
         key = key.view(key.shape[0], key.shape[1], self.h,self.d_k).transpose(1,2)
-        value = key.view(value.shape[0], value.shape[1], self.h, self.d_k).transpose(1,2)
+        value = value.view(value.shape[0], value.shape[1], self.h, self.d_k).transpose(1,2)
 
         x, self.attention_score = MultiHeadAttentionBlock.attention(query, key, value, mask, self.dropout)
 

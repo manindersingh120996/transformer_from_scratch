@@ -19,14 +19,14 @@ class BilingualDataset(Dataset):
         self.tgt_lang = tgt_lang
         self.seq_len = seq_len
 
-        self.sos_token = torch.Tensor([tokenizer_src.token_to_id(['[SOS]'])], dtype = torch.int64)
-        self.eos_token = torch.Tensor([tokenizer_src.token_to_id(['[EOS]'])], dtype = torch.int64)
-        self.pad_token = torch.Tensor([tokenizer_src.token_to_id(['[PAD]'])], dtype = torch.int64)
+        self.sos_token = torch.tensor([tokenizer_src.token_to_id('[SOS]')], dtype = torch.int64)
+        self.eos_token = torch.tensor([tokenizer_src.token_to_id('[EOS]')], dtype = torch.int64)
+        self.pad_token = torch.tensor([tokenizer_src.token_to_id('[PAD]')], dtype = torch.int64)
 
     def __len__(self,):
         return len(self.ds)
     
-    def __getitem__(self,index: Any) -> Any:
+    def __getitem__(self,index: any) -> any:
         src_target_pair = self.ds[index]
         src_text = src_target_pair['translation'][self.src_lang]
         tgt_text = src_target_pair['translation'][self.tgt_lang]
@@ -37,7 +37,7 @@ class BilingualDataset(Dataset):
         enc_num_padding_tokens = self.seq_len - len(enc_input_tokens) - 2
         dec_num_padding_tokens = self.seq_len - len(dec_input_tokens) - 1
 
-        if enc_num_padding_tokens < 0 or dec_input_tokens:
+        if enc_num_padding_tokens < 0 or dec_num_padding_tokens <0:
             raise ValueError("Sentence is too long")
         
         # adding SOS and EOS to the sorce text
