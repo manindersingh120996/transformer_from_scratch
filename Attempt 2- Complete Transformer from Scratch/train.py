@@ -13,11 +13,14 @@ from config import get_config, get_weights_file_path
 from tqdm import tqdm
 from pathlib import Path
 import torchmetrics
+from datasets import load_dataset, load_from_disk, DatasetDict
 
 
 def greedy_decode(model, source, source_mask, tokenizer_src, tokenizer_tgt, max_len, device):
-    sos_idx = tokenizer_tgt.token_to_idx('[SOS]')
-    eos_idx = tokenizer_tgt.token_to_idx('[EOS]')
+    sos_idx = tokenizer_tgt.token_to_id('[SOS]')
+    eos_idx = tokenizer_tgt.token_to_id('[EOS]')
+    print("SOS index:", sos_idx)
+    print("EOS index:", eos_idx)
 
     # computeing the encoder output once and using it for all the required times during decodeing from decoder
     encoder_output = model.encode(source,source_mask)
@@ -39,13 +42,22 @@ def greedy_decode(model, source, source_mask, tokenizer_src, tokenizer_tgt, max_
 
         # sleecting the token with maximum probabaility (as it is greedy search), but there exists other methods as well
         # and here top_p, top_k, temperature like parameters can be introduced
-        _, next_word  = torch.max(prob_dim = 1)
-        decoder_input = torch.cat([decoder_input,torch.empty(1,1).type_as(source).fill_(next_word.item()).to(device)],dim=1)
+        _, next_word  = torch.max(prob, dim = 1)
+        print("Predicted token index:", next_word.item())
+
+        decoder_input = torch.cat(
+            [decoder_input,
+             torch.empty(1,1).type_as(source).fill_(next_word.item()).to(device)],
+             dim=1)
+        decoded_tokens = decoder_input.squeeze(0).tolist()
+        decoded_text = tokenizer_tgt.decode(decoded_tokens)
+        print("Current partial prediction:", decoded_text)
+
 
         if next_word == eos_idx:
             break
 
-        return decoder_input.squeeze(0)
+    return decoder_input.squeeze(0)
     
 
 def run_validation(model, validation_ds, tokenizer_src, tokenizer_tgt, max_len, device, print_msg, global_step,
@@ -72,6 +84,10 @@ def run_validation(model, validation_ds, tokenizer_src, tokenizer_tgt, max_len, 
 
             source_text = batch['src_text'][0]
             target_text = batch['tgt_text'][0]
+            # print_msg('-'*console_width)
+            # print_msg(model_out)
+            # print_msg(type(model_out))
+            # print_msg('-'*console_width)
             model_out_text = tokenizer_tgt.decode(model_out.detach().cpu().numpy())
 
             source_texts.append(source_text)
@@ -108,10 +124,30 @@ def run_validation(model, validation_ds, tokenizer_src, tokenizer_tgt, max_len, 
             writer.add_scalar('validation BLEU', bleu, global_step)
             writer.flush()
                 
+def get_filtered_dataset(config, tokenizer_src, tokenizer_tgt):
+    cache_path = Path("cached_filtered_dataset")
 
+    if cache_path.exists():
+        print("🔁 Loading pre-filtered dataset from disk...")
+        ds_filtered = load_from_disk(cache_path)
+    else:
+        print("📥 Loading dataset from HuggingFace...")
+        ds_raw = load_dataset("cfilt/iitb-english-hindi", split="train")
 
+        print("🔍 Filtering dataset (this may take time)...")
+        seq_limit = config['seq_len'] - 10
 
+        def is_valid(example):
+            src_ids = tokenizer_src.encode(example['translation'][config['lang_src']]).ids
+            tgt_ids = tokenizer_tgt.encode(example['translation'][config['lang_tgt']]).ids
+            return len(src_ids) <= seq_limit and len(tgt_ids) <= seq_limit
 
+        ds_filtered = ds_raw.filter(is_valid)
+
+        print("📦 Saving filtered dataset to disk...")
+        ds_filtered.save_to_disk(cache_path)
+
+    return ds_filtered
 
 def get_all_sentences(ds,lang):
     for item in ds:
@@ -147,9 +183,10 @@ def get_ds(config):
         tgt_ids = tokenizer_tgt.encode(example['translation'][config['lang_tgt']]).ids
         return len(src_ids) <= seq_limit and len(tgt_ids) <= seq_limit
 
-    ds_raw = ds_raw.filter(is_valid)
+    # ds_raw = ds_raw.filter(is_valid)
+    ds_raw = get_filtered_dataset(config, tokenizer_src, tokenizer_tgt)
     filtered_data = list(ds_raw)
-    filtered_data = filtered_data[:100]
+    filtered_data = filtered_data[:1000]
     print(f"Dataset Filtered for sentences having length less then {config['seq_len']}")
     print(f"Len of Data Set : {len(filtered_data)}")
     writer = SummaryWriter(config['experiment_name'])
@@ -222,7 +259,7 @@ def train_model(config):
         optimizer.load_state_dict(state['optimizer_state_dict'])
         global_step = state['global_step']
 
-    loss_fn = nn.CrossEntropyLoss(ignore_index=tokenizer_src.token_to_id('[PAD]'), label_smoothing=0.1).to(device)
+    loss_fn = nn.CrossEntropyLoss(ignore_index=tokenizer_tgt.token_to_id('[PAD]'), label_smoothing=0.1).to(device)
     print(f"Started model training...")
     writer.add_text("Model Training Paramters and details",str(config))
     writer.flush()
@@ -268,7 +305,7 @@ def train_model(config):
                        device, lambda msg: batch_iterator.write(msg), global_step, writer)
 
         # saving the model at the end of each epoch
-        if epoch % config['save_every'] == 0:
+        if (epoch+1) % config['save_every'] == 0:
             model_filename = get_weights_file_path(config, f'{epoch:02d}')
             torch.save({
                 'epoch' : epoch,
