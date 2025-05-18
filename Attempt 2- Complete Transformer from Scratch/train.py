@@ -186,7 +186,7 @@ def get_ds(config):
     # ds_raw = ds_raw.filter(is_valid)
     ds_raw = get_filtered_dataset(config, tokenizer_src, tokenizer_tgt)
     filtered_data = list(ds_raw)
-    filtered_data = filtered_data[:1000]
+    filtered_data = filtered_data[:40000]
     print(f"Dataset Filtered for sentences having length less then {config['seq_len']}")
     print(f"Len of Data Set : {len(filtered_data)}")
     writer = SummaryWriter(config['experiment_name'])
@@ -243,7 +243,7 @@ def train_model(config):
     train_dataloader, val_dataloader, tokenizer_src, tokenizer_tgt = get_ds(config)
 
     model = get_model(config, tokenizer_src.get_vocab_size(), tokenizer_tgt.get_vocab_size()).to(device)
-
+    model = torch.compile(model)
     # writing to tensor board
     writer = SummaryWriter(config['experiment_name'])
 
@@ -306,7 +306,7 @@ def train_model(config):
 
         # saving the model at the end of each epoch
         if (epoch+1) % config['save_every'] == 0:
-            model_filename = get_weights_file_path(config, f'{epoch:02d}')
+            model_filename = get_weights_file_path(config, f'{epoch+1:02d}')
             torch.save({
                 'epoch' : epoch,
                 'model_state_dict' : model.state_dict(),
