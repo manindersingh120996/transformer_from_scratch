@@ -13,8 +13,11 @@ from config import get_config, get_weights_file_path
 from tqdm import tqdm
 from pathlib import Path
 import torchmetrics
+import inspect
+import math
 from datasets import load_dataset, load_from_disk, DatasetDict
 
+config = get_config()
 
 def greedy_decode(model, source, source_mask, tokenizer_src, tokenizer_tgt, max_len, device):
     sos_idx = tokenizer_tgt.token_to_id('[SOS]')
@@ -186,7 +189,7 @@ def get_ds(config):
     # ds_raw = ds_raw.filter(is_valid)
     ds_raw = get_filtered_dataset(config, tokenizer_src, tokenizer_tgt)
     filtered_data = list(ds_raw)
-    filtered_data = filtered_data[:200]
+    filtered_data = filtered_data[200:560]
     print(f"Dataset Filtered for sentences having length less then {config['seq_len']}")
     print(f"Len of Data Set : {len(filtered_data)}")
     writer = SummaryWriter(config['experiment_name'])
@@ -235,7 +238,50 @@ def get_model(config,
     print("Model created and loaded successfully using 'build_transformer' function...")
     return model
 
+def configure_optimizers(model,weight_decay, learning_rate, device_type):
+    # start with all of the candidate parameters (that require grad)
+    param_dict = {pn: p for pn, p in model.named_parameters()}
+    param_dict = {pn: p for pn, p in param_dict.items() if p.requires_grad}
+    # create optim groups. Any parameters that is 2D will be weight decayed, otherwise no.
+    # i.e. all weight tensors in matmuls + embeddings decay, all biases and layernorms don't.
+    decay_params = [p for n, p in param_dict.items() if p.dim() >= 2]
+    nodecay_params = [p for n, p in param_dict.items() if p.dim() < 2]
+    optim_groups = [
+        {'params': decay_params, 'weight_decay': weight_decay},
+        {'params': nodecay_params, 'weight_decay': 0.0}
+    ]
+    num_decay_params = sum(p.numel() for p in decay_params)
+    num_nodecay_params = sum(p.numel() for p in nodecay_params)
+    # if master_process:
+    print(f"num decayed parameter tensors: {len(decay_params)}, with {num_decay_params:,} parameters")
+    print(f"num non-decayed parameter tensors: {len(nodecay_params)}, with {num_nodecay_params:,} parameters")
+    # Create AdamW optimizer and use the fused version if it is available
+    fused_available = 'fused' in inspect.signature(torch.optim.AdamW).parameters
+    use_fused = fused_available and device_type == "cuda"
+    # if master_process:
+    print(f"using fused AdamW: {use_fused}")
+    optimizer = torch.optim.AdamW(optim_groups, lr=learning_rate, betas=(0.9, 0.95), eps=1e-8, fused=use_fused)
+    return optimizer
 # to include function to have a warmup step and a variable learning rate as per origninal paper
+max_lr = 6e-4
+min_lr = max_lr * 0.1
+warmup_steps = config['num_epochs'] // 4
+max_steps = config['num_epochs'] # 
+
+def get_lr(it):
+    # 1) linear warmup for warmup_iter steps
+    if it<warmup_steps:
+        return max_lr * (it + 1) / warmup_steps
+       
+    # 2) if it > lr_decay_iters, return min learning rate
+    if it > max_steps:
+        return min_lr
+    
+    #3) in between, use cosine decay down to min learning rate
+    decay_ratio = (it - warmup_steps) / (max_steps - warmup_steps)
+    assert 0 <= decay_ratio <= 1
+    coeff = 0.5 * (1.0 + math.cos(math.pi * decay_ratio)) #coeff starts at 1 and goes to zero
+    return min_lr + coeff * (max_lr - min_lr)
 
 def train_model(config):
     
@@ -251,8 +297,11 @@ def train_model(config):
     # writing to tensor board
     writer = SummaryWriter(config['experiment_name'])
 
-    optimizer = torch.optim.adamw(model.parameters(), lr = config['lr'], eps=1e-9)
-
+    # optimizer = torch.optim.AdamW(model.parameters(), lr = config['lr'], eps=1e-9)
+    optimizer = configure_optimizers(model,
+                                    weight_decay = 0.1,
+                                    learning_rate = 6e-4,
+                                    device_type = device)
     initial_epoch = 0
     global_step = 0
     if config['preload']:
@@ -268,10 +317,11 @@ def train_model(config):
     writer.add_text("Model Training Paramters and details",str(config))
     writer.flush()
     for epoch in range(initial_epoch,config['num_epochs']):
+        model.train()
         batch_iterator = tqdm(train_dataloader, desc=f"Processing epoch {epoch:02d}")
         for batch in batch_iterator:
-            torch.cuda.empty_cache()
-            model.train()
+            # torch.cuda.empty_cache()
+            
 
             encoder_input = batch['encoder_input'].to(device) # (B, Seq_Len)
             decoder_input = batch['decoder_input'].to(device) # (B, Seq_Len)
@@ -296,10 +346,17 @@ def train_model(config):
 
             # logging the loss to tensorboard
             writer.add_scalar('traininig loss' , loss.item(), global_step)
-            writer.flush()
-
+            
+            
             # loss backpropagation
             loss.backward()
+            lr = get_lr(epoch)
+            # print('learning rate : ', lr)
+            writer.add_scalar('learning rate', lr, global_step)
+            writer.flush()
+            for param_group in optimizer.param_groups:
+                param_group['lr'] = lr
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             optimizer.step()
             optimizer.zero_grad()
 
