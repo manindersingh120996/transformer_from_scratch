@@ -186,7 +186,7 @@ def get_ds(config):
     # ds_raw = ds_raw.filter(is_valid)
     ds_raw = get_filtered_dataset(config, tokenizer_src, tokenizer_tgt)
     filtered_data = list(ds_raw)
-    filtered_data = filtered_data[:40000]
+    filtered_data = filtered_data[:200]
     print(f"Dataset Filtered for sentences having length less then {config['seq_len']}")
     print(f"Len of Data Set : {len(filtered_data)}")
     writer = SummaryWriter(config['experiment_name'])
@@ -229,9 +229,13 @@ def get_model(config,
               vocab_src_len,
               vocab_tgt_len,):
     print("Started Creating model...")
-    model = build_transformer(vocab_src_len,vocab_tgt_len,config['seq_len'], config['seq_len'], config['d_model'])
+    model = build_transformer(vocab_src_len,vocab_tgt_len,config['seq_len'], 
+                              config['seq_len'], config['d_model'],config['N'],
+                              config['head'],0.1,config['d_ff'])
     print("Model created and loaded successfully using 'build_transformer' function...")
     return model
+
+# to include function to have a warmup step and a variable learning rate as per origninal paper
 
 def train_model(config):
     
@@ -247,7 +251,7 @@ def train_model(config):
     # writing to tensor board
     writer = SummaryWriter(config['experiment_name'])
 
-    optimizer = torch.optim.Adam(model.parameters(), lr = config['lr'], eps=1e-9)
+    optimizer = torch.optim.adamw(model.parameters(), lr = config['lr'], eps=1e-9)
 
     initial_epoch = 0
     global_step = 0
