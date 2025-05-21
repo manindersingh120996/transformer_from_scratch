@@ -135,7 +135,8 @@ def get_filtered_dataset(config, tokenizer_src, tokenizer_tgt):
         ds_filtered = load_from_disk(cache_path)
     else:
         print("📥 Loading dataset from HuggingFace...")
-        ds_raw = load_dataset("cfilt/iitb-english-hindi", split="train")
+        ds_raw = load_dataset("philomath-1209/english-to-hindi-high-quality-training-data", split="train")
+        # ds_raw = load_dataset("cfilt/iitb-english-hindi", split="train")
 
         print("🔍 Filtering dataset (this may take time)...")
         seq_limit = config['seq_len'] - 10
@@ -189,7 +190,7 @@ def get_ds(config):
     # ds_raw = ds_raw.filter(is_valid)
     ds_raw = get_filtered_dataset(config, tokenizer_src, tokenizer_tgt)
     filtered_data = list(ds_raw)
-    filtered_data = filtered_data[200:560]
+    filtered_data = filtered_data[:100]
     print(f"Dataset Filtered for sentences having length less then {config['seq_len']}")
     print(f"Len of Data Set : {len(filtered_data)}")
     writer = SummaryWriter(config['experiment_name'])
@@ -221,7 +222,8 @@ def get_ds(config):
     writer.add_scalar("Max length of soruce sentence:" ,max_len_src)
     writer.add_scalar("Max length of target sentence:" ,max_len_tgt)
 
-    train_dataloader = DataLoader(train_ds,batch_size=config['batch_size'], shuffle=True)
+    train_dataloader = DataLoader(train_ds,batch_size=config['batch_size'],#len(train_ds),#config['batch_size'],
+                                   shuffle=True)
     val_dataloader = DataLoader(val_ds,batch_size=1, shuffle=True)
     print("Data loader, Source tokenizer and target tokenizer created...")
 
@@ -234,7 +236,7 @@ def get_model(config,
     print("Started Creating model...")
     model = build_transformer(vocab_src_len,vocab_tgt_len,config['seq_len'], 
                               config['seq_len'], config['d_model'],config['N'],
-                              config['head'],0.1,config['d_ff'])
+                              config['head'],0.0,config['d_ff'])
     print("Model created and loaded successfully using 'build_transformer' function...")
     return model
 
