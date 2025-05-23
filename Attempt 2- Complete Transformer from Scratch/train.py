@@ -16,8 +16,49 @@ import torchmetrics
 import inspect
 import math
 from datasets import load_dataset, load_from_disk, DatasetDict
-
+import torch.nn.functional as F
 config = get_config()
+
+
+def beam_search_decode(model, source, source_mask, tokenizer_tgt, max_len, device, beam_size=3):
+    sos_idx = tokenizer_tgt.token_to_id('[SOS]')
+    eos_idx = tokenizer_tgt.token_to_id('[EOS]')
+
+    encoder_output = model.encode(source, source_mask)
+    sequences = [[torch.tensor([sos_idx], device=device), 0.0]]  # (tokens, score)
+
+    for _ in range(max_len):
+        all_candidates = []
+        for seq, score in sequences:
+            if seq[-1].item() == eos_idx:
+                all_candidates.append((seq, score))
+                continue
+
+            decoder_input = seq.unsqueeze(0)  # shape (1, current_seq_len)
+            decoder_mask = causal_mask(decoder_input.size(1)).to(device)
+            out = model.decode(encoder_output, source_mask, decoder_input, decoder_mask)
+            logits = model.project(out[:, -1])  # (1, vocab_size)
+            log_probs = F.log_softmax(logits, dim=-1)
+
+            topk_log_probs, topk_indices = torch.topk(log_probs, beam_size, dim=-1)
+
+            for i in range(beam_size):
+                next_token = topk_indices[0, i].item()
+                next_score = score + topk_log_probs[0, i].item()
+                new_seq = torch.cat([seq, torch.tensor([next_token], device=device)])
+                all_candidates.append((new_seq, next_score))
+
+        # select best beam_size sequences
+        ordered = sorted(all_candidates, key=lambda tup: tup[1], reverse=True)
+        sequences = ordered[:beam_size]
+
+        # if all candidates ended with EOS
+        if all(seq[-1].item() == eos_idx for seq, _ in sequences):
+            break
+
+    # Return the best sequence (excluding SOS)
+    best_seq = sequences[0][0]
+    return best_seq[1:] if best_seq[0].item() == sos_idx else best_seq
 
 def greedy_decode(model, source, source_mask, tokenizer_src, tokenizer_tgt, max_len, device):
     sos_idx = tokenizer_tgt.token_to_id('[SOS]')
@@ -63,7 +104,7 @@ def greedy_decode(model, source, source_mask, tokenizer_src, tokenizer_tgt, max_
     return decoder_input.squeeze(0)
     
 
-def run_validation(model, validation_ds, tokenizer_src, tokenizer_tgt, max_len, device, print_msg, global_step,
+def run_validation_greedy(model, validation_ds, tokenizer_src, tokenizer_tgt, max_len, device, print_msg, global_step,
                    writer, num_examples = 2):
     model.eval()
     count = 0
@@ -126,7 +167,66 @@ def run_validation(model, validation_ds, tokenizer_src, tokenizer_tgt, max_len, 
             bleu = metric(predicted, expected)
             writer.add_scalar('validation BLEU', bleu, global_step)
             writer.flush()
-                
+
+
+def run_validation_beam(model, validation_ds, tokenizer_src, tokenizer_tgt, max_len, device, print_msg, global_step,
+                   writer, num_examples=2, beam_size=3):
+    model.eval()
+    count = 0
+
+    source_texts = []
+    expected = []
+    predicted = []
+
+    console_width = 80
+
+    with torch.no_grad():
+        for batch in validation_ds:
+            count += 1
+            encoder_input = batch['encoder_input'].to(device)
+            encoder_mask = batch['encoder_mask'].to(device)
+
+            assert encoder_input.size(0) == 1, "Batch Size must be 1 for the Validation"
+
+            # Replace greedy_decode with beam_search_decode
+            model_out = beam_search_decode(
+                model, encoder_input, encoder_mask, tokenizer_tgt, max_len, device, beam_size=beam_size
+            )
+
+            source_text = batch['src_text'][0]
+            target_text = batch['tgt_text'][0]
+            model_out_text = tokenizer_tgt.decode(model_out.detach().cpu().numpy())
+
+            source_texts.append(source_text)
+            expected.append(target_text)
+            predicted.append(model_out_text)
+
+            print_msg('-' * console_width)
+            print_msg(f"🌐 SOURCE    : {source_text}")
+            print_msg(f"🎯 TARGET    : {target_text}")
+            print_msg(f"🤖 PREDICTED : {model_out_text}")
+
+            if count == num_examples:
+                print_msg("-" * console_width)
+                break
+
+        if writer:
+            import torchmetrics
+
+            metric = torchmetrics.CharErrorRate()
+            cer = metric(predicted, expected)
+            writer.add_scalar('validation cer', cer, global_step)
+
+            metric = torchmetrics.WordErrorRate()
+            wer = metric(predicted, expected)
+            writer.add_scalar('validation wer', wer, global_step)
+
+            metric = torchmetrics.BLEUScore()
+            bleu = metric(predicted, expected)
+            writer.add_scalar('validation BLEU', bleu, global_step)
+
+            writer.flush()
+
 def get_filtered_dataset(config, tokenizer_src, tokenizer_tgt):
     cache_path = Path("cached_filtered_dataset")
 
@@ -190,7 +290,7 @@ def get_ds(config):
     # ds_raw = ds_raw.filter(is_valid)
     ds_raw = get_filtered_dataset(config, tokenizer_src, tokenizer_tgt)
     filtered_data = list(ds_raw)
-    filtered_data = filtered_data[:1000]
+    filtered_data = filtered_data[:100]
     print(f"Dataset Filtered for sentences having length less then {config['seq_len']}")
     print(f"Len of Data Set : {len(filtered_data)}")
     writer = SummaryWriter(config['experiment_name'])
@@ -223,8 +323,8 @@ def get_ds(config):
     writer.add_scalar("Max length of target sentence:" ,max_len_tgt)
 
     train_dataloader = DataLoader(train_ds,batch_size=config['batch_size'],#len(train_ds),#config['batch_size'],
-                                   shuffle=True)
-    val_dataloader = DataLoader(val_ds,batch_size=1, shuffle=True)
+                                   shuffle=True,num_workers = 16)
+    val_dataloader = DataLoader(val_ds,batch_size=1, shuffle=True,num_workers = 16)
     print("Data loader, Source tokenizer and target tokenizer created...")
 
     return train_dataloader, val_dataloader, tokenizer_src, tokenizer_tgt
@@ -285,7 +385,13 @@ def get_lr(it):
     coeff = 0.5 * (1.0 + math.cos(math.pi * decay_ratio)) #coeff starts at 1 and goes to zero
     return min_lr + coeff * (max_lr - min_lr)
 
+from torch.cuda.amp import autocast, GradScaler
+
+
+
 def train_model(config):
+    # train_loss = []
+    scaler = GradScaler()
     
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"Using device : {device}")
@@ -293,7 +399,7 @@ def train_model(config):
     Path(config['model_folder']).mkdir(parents=True, exist_ok = True)
 
     train_dataloader, val_dataloader, tokenizer_src, tokenizer_tgt = get_ds(config)
-
+    torch.set_float32_matmul_precision('high')
     model = get_model(config, tokenizer_src.get_vocab_size(), tokenizer_tgt.get_vocab_size()).to(device)
     model = torch.compile(model)
     # writing to tensor board
@@ -363,8 +469,10 @@ def train_model(config):
             optimizer.zero_grad()
 
             global_step += 1
+        with open("training_loss.txt",'a+') as f:
+            f.write(str(loss.item()) + "\n")
 
-        run_validation(model, val_dataloader, tokenizer_src, tokenizer_tgt, config['seq_len'],
+        run_validation_beam(model, val_dataloader, tokenizer_src, tokenizer_tgt, config['seq_len'],
                        device, lambda msg: batch_iterator.write(msg), global_step, writer)
 
         # saving the model at the end of each epoch
