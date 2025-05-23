@@ -469,11 +469,12 @@ def train_model(config):
             optimizer.zero_grad()
 
             global_step += 1
+        
+        run_validation_greedy(model, val_dataloader, tokenizer_src, tokenizer_tgt, config['seq_len'],
+                       device, lambda msg: batch_iterator.write(msg), global_step, writer)
+
         with open("training_loss.txt",'a+') as f:
             f.write(str(loss.item()) + "\n")
-
-        run_validation_beam(model, val_dataloader, tokenizer_src, tokenizer_tgt, config['seq_len'],
-                       device, lambda msg: batch_iterator.write(msg), global_step, writer)
 
         # saving the model at the end of each epoch
         if (epoch+1) % config['save_every'] == 0:
