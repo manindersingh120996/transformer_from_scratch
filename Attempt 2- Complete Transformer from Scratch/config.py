@@ -1,13 +1,13 @@
 from pathlib import Path
 def get_config():
     return {
-        "batch_size": 256,
-        "num_epochs" : 200,
+        "batch_size": 50,
+        "num_epochs" : 100,
         "lr": 10**-3,
-        "seq_len" : 128,
-        "d_model" : 256,
-        "N":4,
-        "d_ff":512,
+        "seq_len" : 16,
+        "d_model" : 128,
+        "N":2,
+        "d_ff":256,
         "head":4,
         "lang_src": "en",
         "lang_tgt": "hi",
@@ -16,7 +16,7 @@ def get_config():
         "preload": None,
         "tokenizer_file": "tokenizer_{0}.json",
         "experiment_name": "runs/tmodel",
-        "save_every" : 10,
+        "save_every" : 20,
         "warmup_steps": 4000,
         "weight_decay": 0.01,
     }

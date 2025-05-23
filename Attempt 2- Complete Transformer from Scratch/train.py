@@ -98,10 +98,10 @@ def greedy_decode(model, source, source_mask, tokenizer_src, tokenizer_tgt, max_
         print("Current partial prediction:", decoded_text)
 
 
-        if next_word == eos_idx:
+        if next_word.item() == eos_idx:
             break
 
-    return decoder_input.squeeze(0)
+    return decoder_input.squeeze(0)[1:]
     
 
 def run_validation_greedy(model, validation_ds, tokenizer_src, tokenizer_tgt, max_len, device, print_msg, global_step,
@@ -290,7 +290,7 @@ def get_ds(config):
     # ds_raw = ds_raw.filter(is_valid)
     ds_raw = get_filtered_dataset(config, tokenizer_src, tokenizer_tgt)
     filtered_data = list(ds_raw)
-    filtered_data = filtered_data[:20000]
+    filtered_data = filtered_data[:5000]
     print(f"Dataset Filtered for sentences having length less then {config['seq_len']}")
     print(f"Len of Data Set : {len(filtered_data)}")
     writer = SummaryWriter(config['experiment_name'])
@@ -304,6 +304,11 @@ def get_ds(config):
     train_ds = BilingualDataset(train_ds_raw, tokenizer_src, tokenizer_tgt, config['lang_src'], config['lang_tgt'], config['seq_len'])
     val_ds = BilingualDataset(val_ds_raw, tokenizer_src, tokenizer_tgt, config['lang_src'], config['lang_tgt'], config['seq_len'])
     print("Dataset devided into train and eval")
+    # print(train_ds[8])
+    # import sys
+    # with open('sample_encoding.txt','w+', encoding="utf-8") as f:
+    #     f.write(str(train_ds[8]))
+    # sys.exit(0)
 
 
     max_len_src = 0
@@ -323,8 +328,8 @@ def get_ds(config):
     writer.add_scalar("Max length of target sentence:" ,max_len_tgt)
 
     train_dataloader = DataLoader(train_ds,batch_size=config['batch_size'],#len(train_ds),#config['batch_size'],
-                                   shuffle=True,num_workers = 16)
-    val_dataloader = DataLoader(val_ds,batch_size=1, shuffle=True,num_workers = 16)
+                                   shuffle=True,)#num_workers = 8)
+    val_dataloader = DataLoader(val_ds,batch_size=1, shuffle=True,)#num_workers = 8)
     print("Data loader, Source tokenizer and target tokenizer created...")
 
     return train_dataloader, val_dataloader, tokenizer_src, tokenizer_tgt
@@ -336,7 +341,7 @@ def get_model(config,
     print("Started Creating model...")
     model = build_transformer(vocab_src_len,vocab_tgt_len,config['seq_len'], 
                               config['seq_len'], config['d_model'],config['N'],
-                              config['head'],0.0,config['d_ff'])
+                              config['head'],0.1,config['d_ff'])
     print("Model created and loaded successfully using 'build_transformer' function...")
     return model
 
@@ -365,9 +370,9 @@ def configure_optimizers(model,weight_decay, learning_rate, device_type):
     optimizer = torch.optim.AdamW(optim_groups, lr=learning_rate, betas=(0.9, 0.95), eps=1e-8, fused=use_fused)
     return optimizer
 # to include function to have a warmup step and a variable learning rate as per origninal paper
-max_lr = 6e-4
+max_lr = 6e-3
 min_lr = max_lr * 0.1
-warmup_steps = config['num_epochs'] // 4
+warmup_steps = config['num_epochs'] // 8
 max_steps = config['num_epochs'] # 
 
 def get_lr(it):
@@ -391,7 +396,7 @@ from torch.cuda.amp import autocast, GradScaler
 
 def train_model(config):
     # train_loss = []
-    scaler = GradScaler()
+    # scaler = GradScaler()
     
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"Using device : {device}")
@@ -399,7 +404,10 @@ def train_model(config):
     Path(config['model_folder']).mkdir(parents=True, exist_ok = True)
 
     train_dataloader, val_dataloader, tokenizer_src, tokenizer_tgt = get_ds(config)
-    torch.set_float32_matmul_precision('high')
+
+    # mixed precision code to be used to train modl in mixed precision
+    # torch.set_float32_matmul_precision('high')
+    
     model = get_model(config, tokenizer_src.get_vocab_size(), tokenizer_tgt.get_vocab_size()).to(device)
     model = torch.compile(model)
     # writing to tensor board
@@ -420,7 +428,7 @@ def train_model(config):
         optimizer.load_state_dict(state['optimizer_state_dict'])
         global_step = state['global_step']
 
-    loss_fn = nn.CrossEntropyLoss(ignore_index=tokenizer_tgt.token_to_id('[PAD]'), label_smoothing=0.1).to(device)
+    loss_fn = nn.CrossEntropyLoss(ignore_index=tokenizer_tgt.token_to_id('[PAD]'), label_smoothing=0.2).to(device)
     print(f"Started model training...")
     writer.add_text("Model Training Paramters and details",str(config))
     writer.flush()
