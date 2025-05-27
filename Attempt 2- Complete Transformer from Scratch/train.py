@@ -290,7 +290,7 @@ def get_ds(config):
     # ds_raw = ds_raw.filter(is_valid)
     ds_raw = get_filtered_dataset(config, tokenizer_src, tokenizer_tgt)
     filtered_data = list(ds_raw)
-    # filtered_data = filtered_data[:5000]
+    filtered_data = filtered_data[:20000]
     print(f"Dataset Filtered for sentences having length less then {config['seq_len']}")
     print(f"Len of Data Set : {len(filtered_data)}")
     writer = SummaryWriter(config['experiment_name'])
@@ -370,7 +370,7 @@ def configure_optimizers(model,weight_decay, learning_rate, device_type):
     optimizer = torch.optim.AdamW(optim_groups, lr=learning_rate, betas=(0.9, 0.95), eps=1e-8, fused=use_fused)
     return optimizer
 # to include function to have a warmup step and a variable learning rate as per origninal paper
-max_lr = 6e-3
+max_lr = 6e-4
 min_lr = max_lr * 0.1
 warmup_steps = config['num_epochs'] // 8
 max_steps = config['num_epochs'] # 
@@ -397,8 +397,17 @@ from torch.cuda.amp import autocast, GradScaler
 def train_model(config):
     # train_loss = []
     # scaler = GradScaler()
+    if torch.backends.mps.is_available() and torch.backends.mps.is_built():
+        print("✅ Using Apple MPS (Metal Performance Shaders)")
+        device = torch.device("mps")
+    elif torch.cuda.is_available():
+        print(f"✅ Using CUDA (GPU): {torch.cuda.get_device_name(0)}")
+        device = torch.device("cuda")
+    else:
+        print("⚠️ No GPU available. Using CPU.")
+        device = torch.device("cpu")
     
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    # device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"Using device : {device}")
     
     Path(config['model_folder']).mkdir(parents=True, exist_ok = True)

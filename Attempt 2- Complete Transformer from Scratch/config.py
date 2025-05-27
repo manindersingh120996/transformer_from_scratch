@@ -4,7 +4,7 @@ def get_config():
         "batch_size": 50,
         "num_epochs" : 100,
         "lr": 10**-3,
-        "seq_len" : 16,
+        "seq_len" : 32,
         "d_model" : 128,
         "N":2,
         "d_ff":256,
