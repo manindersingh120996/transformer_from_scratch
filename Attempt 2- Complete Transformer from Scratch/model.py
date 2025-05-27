@@ -98,7 +98,7 @@ class MultiHeadAttentionBlock(nn.Module):
         # Batch_size, h, seq_len, d_k -> (Batch_size, h, Seq_len, seq_len)
         attention_scores = (query @ key.transpose(-2,-1)) / math.sqrt(d_k) # QUERY AND KEY PRODUCT
         if mask is not None:
-            attention_scores.masked_fill(mask == 0, -1e9)
+            attention_scores = attention_scores.masked_fill(mask == 0, -1e9)
         attention_scores = attention_scores.softmax(dim=-1)
         if dropout is not None:
             attention_scores = dropout(attention_scores)
@@ -200,7 +200,8 @@ class ProjectionLayer(nn.Module):
 
     def forward(self,x):
         # batch_size, seq_len, d_model -> batch_size,seq_len,vocab_size
-        return torch.log_softmax(self.proj(x), dim=-1)
+        # return torch.log_softmax(self.proj(x), dim=-1)
+        return self.proj(x)
     
 class Transformer(nn.Module):
 
